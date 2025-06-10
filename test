@@ -1,2 +1,1 @@
-Route::get('/errorlog', ErrorLogViewer::class)->name('errorlog.index');
-});
+
