@@ -1,364 +1,317 @@
-<div>
-    <x-app-layout>
-        <x-app-content>
-            <x-app-marginal>
-                <div class="d-flex justify-content-between align-items-center">
-                    <h1 class="h3 mb-0">
-                        <i class="bi bi-file-earmark-text"></i> Error Log Viewer
-                    </h1>
-                    <div>
-                        <button wire:click="toggleAutoRefresh" 
-                                class="btn btn-sm {{ $autoRefresh ? 'btn-success' : 'btn-outline-secondary' }}">
-                            <i class="bi {{ $autoRefresh ? 'bi-arrow-repeat' : 'bi-pause' }}"></i>
-                            {{ $autoRefresh ? 'Auto-Refresh An' : 'Auto-Refresh Aus' }}
-                        </button>
-                    </div>
-                </div>
-            </x-app-marginal>
+<?php
 
-```
-        <div class="container-fluid py-4">
-            <div class="row">
-                {{-- Sidebar mit Log-Dateien --}}
-                <div class="col-lg-3 mb-4">
-                    <div class="card shadow-sm">
-                        <div class="card-header bg-gradient bg-dark text-white">
-                            <h5 class="mb-0">
-                                <i class="bi bi-files"></i> Log Files
-                                <span class="badge bg-light text-dark float-end">{{ count($files) }}</span>
-                            </h5>
-                        </div>
-                        <div class="list-group list-group-flush" style="max-height: 70vh; overflow-y: auto;">
-                            @forelse($files as $file)
-                                <button wire:click="selectFile('{{ $file['name'] }}')" 
-                                        class="list-group-item list-group-item-action {{ $currentFile === $file['name'] ? 'active' : '' }}">
-                                    <div class="d-flex justify-content-between align-items-start">
-                                        <div class="me-2 text-start">
-                                            <div class="fw-bold text-truncate" style="max-width: 180px;">
-                                                {{ $file['name'] }}
-                                            </div>
-                                            <small class="{{ $currentFile === $file['name'] ? 'text-white-50' : 'text-muted' }}">
-                                                {{ $file['last_modified_human'] }}
-                                            </small>
-                                        </div>
-                                        <div class="text-end">
-                                            <span class="badge {{ $currentFile === $file['name'] ? 'bg-light text-dark' : 'bg-secondary' }} rounded-pill">
-                                                {{ $file['size'] }}
-                                            </span>
-                                            @if($file['size_raw'] > 10485760) {{-- > 10MB --}}
-                                                <br>
-                                                <small class="text-warning">
-                                                    <i class="bi bi-exclamation-triangle"></i>
-                                                </small>
-                                            @endif
-                                        </div>
-                                    </div>
-                                </button>
-                            @empty
-                                <div class="list-group-item">
-                                    <em class="text-muted">Keine Log-Dateien gefunden</em>
-                                </div>
-                            @endforelse
-                        </div>
-                    </div>
-                </div>
+namespace App\Http\Livewire;
 
-                {{-- Hauptbereich mit Logs --}}
-                <div class="col-lg-9">
-                    @if($currentFile)
-                        {{-- Toolbar --}}
-                        <div class="card shadow-sm mb-3">
-                            <div class="card-body">
-                                <div class="row g-3">
-                                    {{-- Search --}}
-                                    <div class="col-md-4">
-                                        <div class="input-group">
-                                            <span class="input-group-text">
-                                                <i class="bi bi-search"></i>
-                                            </span>
-                                            <input type="text" 
-                                                   wire:model.debounce.300ms="search" 
-                                                   class="form-control" 
-                                                   placeholder="Suchen...">
-                                            @if($search)
-                                                <button wire:click="$set('search', '')" 
-                                                        class="btn btn-outline-secondary">
-                                                    <i class="bi bi-x"></i>
-                                                </button>
-                                            @endif
-                                        </div>
-                                    </div>
+use Livewire\Component;
+use Livewire\WithPagination;
+use Illuminate\Support\Facades\File;
+use Carbon\Carbon;
 
-                                    {{-- Level Filter --}}
-                                    <div class="col-md-3">
-                                        <select wire:model="level" class="form-select">
-                                            <option value="all">Alle Level</option>
-                                            <option value="emergency">Emergency</option>
-                                            <option value="alert">Alert</option>
-                                            <option value="critical">Critical</option>
-                                            <option value="error">Error</option>
-                                            <option value="warning">Warning</option>
-                                            <option value="notice">Notice</option>
-                                            <option value="info">Info</option>
-                                            <option value="debug">Debug</option>
-                                        </select>
-                                    </div>
+class ErrorLogViewer extends Component
+{
+    use WithPagination;
 
-                                    {{-- Actions --}}
-                                    <div class="col-md-5 text-end">
-                                        <button wire:click="downloadFile('{{ $currentFile }}')" 
-                                                class="btn btn-primary btn-sm">
-                                            <i class="bi bi-download"></i> Download
-                                        </button>
-                                        <button wire:click="clearFile('{{ $currentFile }}')"
-                                                onclick="return confirm('Wirklich alle Logs in dieser Datei löschen?')"
-                                                class="btn btn-warning btn-sm">
-                                            <i class="bi bi-eraser"></i> Leeren
-                                        </button>
-                                        <button wire:click="deleteFile('{{ $currentFile }}')"
-                                                onclick="return confirm('Diese Log-Datei wirklich löschen?')"
-                                                class="btn btn-danger btn-sm">
-                                            <i class="bi bi-trash"></i> Löschen
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+    public $currentFile = '';
+    public $search = '';
+    public $level = 'all';
+    public $showModal = false;
+    public $modalContent = '';
+    public $modalTitle = '';
+    public $autoRefresh = false;
+    public $refreshInterval = 5;
 
-                        {{-- File Info --}}
-                        @if($currentFileInfo)
-                            <div class="alert alert-info alert-dismissible fade show" role="alert">
-                                <i class="bi bi-info-circle"></i>
-                                <strong>{{ $currentFileInfo['name'] }}</strong> - 
-                                {{ $currentFileInfo['size'] }} - 
-                                Zuletzt geändert: {{ $currentFileInfo['last_modified'] }}
-                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                            </div>
-                        @endif
+    protected $paginationTheme = 'bootstrap';
+    protected $logPath;
+    protected $queryString = ['currentFile', 'search', 'level'];
 
-                        {{-- Logs Table --}}
-                        <div class="card shadow-sm">
-                            <div class="table-responsive">
-                                <table class="table table-hover mb-0">
-                                    <thead>
-                                        <tr>
-                                            <th width="180">Zeitstempel</th>
-                                            <th width="100">Level</th>
-                                            <th>Nachricht</th>
-                                            <th width="100">Aktionen</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @forelse($logs as $log)
-                                            <tr class="align-middle">
-                                                <td>
-                                                    <small class="text-muted">
-                                                        {{ $log['timestamp'] }}<br>
-                                                        <em>{{ $log['timestamp_human'] }}</em>
-                                                    </small>
-                                                </td>
-                                                <td>
-                                                    <span class="badge bg-{{ $this->getLevelClass($log['level']) }}">
-                                                        <i class="{{ $this->getLevelIcon($log['level']) }}"></i>
-                                                        {{ strtoupper($log['level']) }}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <div class="text-break" style="max-width: 600px;">
-                                                        {!! $log['message'] !!}
-                                                        @if($log['has_stack'])
-                                                            <br>
-                                                            <small class="text-danger">
-                                                                <i class="bi bi-stack"></i> Stack Trace vorhanden
-                                                            </small>
-                                                        @endif
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    <button wire:click="showLogDetails({{ json_encode($log) }})" 
-                                                            class="btn btn-sm btn-outline-primary">
-                                                        <i class="bi bi-eye"></i> Details
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        @empty
-                                            <tr>
-                                                <td colspan="4" class="text-center py-5 text-muted">
-                                                    <i class="bi bi-inbox display-4"></i>
-                                                    <p class="mt-3">Keine Logs gefunden</p>
-                                                </td>
-                                            </tr>
-                                        @endforelse
-                                    </tbody>
-                                </table>
-                            </div>
+    public function mount()
+    {
+        $this->logPath = storage_path('logs');
+        
+        // Set default file if not set
+        if (empty($this->currentFile)) {
+            $files = $this->getLogFiles();
+            if (!empty($files)) {
+                $this->currentFile = $files[0]['name'];
+            }
+        }
+    }
 
-                            {{-- Pagination --}}
-                            @if($logs->hasPages())
-                                <div class="card-footer">
-                                    {{ $logs->links() }}
-                                </div>
-                            @endif
-                        </div>
-                    @else
-                        <div class="alert alert-warning">
-                            <i class="bi bi-exclamation-triangle"></i>
-                            Keine Log-Datei ausgewählt
-                        </div>
-                    @endif
-                </div>
-            </div>
-        </div>
+    public function render()
+    {
+        $files = $this->getLogFiles();
+        $logs = $this->getLogsFromFile();
+        $currentFileInfo = collect($files)->firstWhere('name', $this->currentFile);
 
-        {{-- Detail Modal --}}
-        @if($showModal)
-            <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
-                <div class="modal-dialog modal-lg modal-dialog-scrollable">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">{{ $modalTitle }}</h5>
-                            <button wire:click="closeModal" type="button" class="btn-close"></button>
-                        </div>
-                        <div class="modal-body">
-                            <pre class="bg-dark text-light p-3 rounded" style="white-space: pre-wrap;">{{ $modalContent }}</pre>
-                        </div>
-                        <div class="modal-footer">
-                            <button wire:click="closeModal" type="button" class="btn btn-secondary">
-                                Schließen
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        @endif
-    </x-app-content>
+        return view('livewire.error-log-viewer', [
+            'files' => $files,
+            'logs' => $logs,
+            'currentFileInfo' => $currentFileInfo
+        ]);
+    }
 
-    @push('scripts')
-    <script>
-        let refreshInterval;
+    public function updatedSearch()
+    {
+        $this->resetPage();
+    }
 
-        window.addEventListener('start-refresh', event => {
-            refreshInterval = setInterval(() => {
-                @this.call('$refresh');
-            }, event.detail.interval);
+    public function updatedLevel()
+    {
+        $this->resetPage();
+    }
+
+    public function selectFile($filename)
+    {
+        $this->currentFile = $filename;
+        $this->resetPage();
+    }
+
+    public function downloadFile($filename)
+    {
+        $path = $this->logPath . '/' . $filename;
+        
+        if (!File::exists($path)) {
+            $this->dispatchBrowserEvent('notify', [
+                'type' => 'error',
+                'message' => 'Log-Datei nicht gefunden'
+            ]);
+            return;
+        }
+
+        return response()->download($path);
+    }
+
+    public function deleteFile($filename)
+    {
+        $path = $this->logPath . '/' . $filename;
+        
+        if (!File::exists($path)) {
+            $this->dispatchBrowserEvent('notify', [
+                'type' => 'error',
+                'message' => 'Datei nicht gefunden'
+            ]);
+            return;
+        }
+
+        File::delete($path);
+        
+        // If current file was deleted, select another
+        if ($this->currentFile === $filename) {
+            $files = $this->getLogFiles();
+            $this->currentFile = !empty($files) ? $files[0]['name'] : '';
+        }
+
+        $this->dispatchBrowserEvent('notify', [
+            'type' => 'success',
+            'message' => 'Log-Datei gelöscht'
+        ]);
+    }
+
+    public function clearFile($filename)
+    {
+        $path = $this->logPath . '/' . $filename;
+        
+        if (!File::exists($path)) {
+            $this->dispatchBrowserEvent('notify', [
+                'type' => 'error',
+                'message' => 'Datei nicht gefunden'
+            ]);
+            return;
+        }
+
+        File::put($path, '');
+        
+        $this->dispatchBrowserEvent('notify', [
+            'type' => 'success',
+            'message' => 'Log-Datei geleert'
+        ]);
+    }
+
+    public function showLogDetails($log)
+    {
+        $this->modalTitle = 'Log Details - ' . strtoupper($log['level']);
+        $this->modalContent = $log['raw_message'];
+        $this->showModal = true;
+    }
+
+    public function closeModal()
+    {
+        $this->showModal = false;
+        $this->modalContent = '';
+        $this->modalTitle = '';
+    }
+
+    public function toggleAutoRefresh()
+    {
+        $this->autoRefresh = !$this->autoRefresh;
+        
+        if ($this->autoRefresh) {
+            $this->dispatchBrowserEvent('start-refresh', ['interval' => $this->refreshInterval * 1000]);
+        } else {
+            $this->dispatchBrowserEvent('stop-refresh');
+        }
+    }
+
+    protected function getLogFiles()
+    {
+        $files = [];
+        
+        if (!File::exists($this->logPath)) {
+            return $files;
+        }
+        
+        $logFiles = File::glob($this->logPath . '/*.log');
+        
+        foreach ($logFiles as $file) {
+            $files[] = [
+                'name' => basename($file),
+                'size' => $this->formatBytes(File::size($file)),
+                'size_raw' => File::size($file),
+                'last_modified' => Carbon::createFromTimestamp(File::lastModified($file))->format('Y-m-d H:i:s'),
+                'last_modified_human' => Carbon::createFromTimestamp(File::lastModified($file))->diffForHumans(),
+                'path' => $file
+            ];
+        }
+        
+        // Sort by last modified desc
+        usort($files, function($a, $b) {
+            return strcmp($b['last_modified'], $a['last_modified']);
         });
+        
+        return $files;
+    }
 
-        window.addEventListener('stop-refresh', event => {
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
+    protected function getLogsFromFile()
+    {
+        if (empty($this->currentFile)) {
+            return collect([]);
+        }
+
+        $path = $this->logPath . '/' . $this->currentFile;
+        
+        if (!File::exists($path)) {
+            return collect([]);
+        }
+        
+        $content = File::get($path);
+        $logs = [];
+        
+        // Laravel log pattern
+        $pattern = '/\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\](?:.*?)\.(\w+):(.*?)(?=\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]|$)/s';
+        
+        preg_match_all($pattern, $content, $matches, PREG_SET_ORDER);
+        
+        foreach ($matches as $match) {
+            $logLevel = strtolower($match[2]);
+            $message = trim($match[3]);
+            
+            // Filter by level
+            if ($this->level !== 'all' && $logLevel !== $this->level) {
+                continue;
             }
+            
+            // Filter by search
+            if ($this->search && stripos($message, $this->search) === false) {
+                continue;
+            }
+            
+            // Extract stack trace info
+            $stackTrace = null;
+            if (preg_match('/Stack trace:(.*?)(?:\[|\z)/s', $message, $stackMatch)) {
+                $stackTrace = trim($stackMatch[1]);
+            }
+            
+            $logs[] = [
+                'timestamp' => $match[1],
+                'timestamp_human' => Carbon::parse($match[1])->diffForHumans(),
+                'level' => $logLevel,
+                'message' => $this->formatMessage($message),
+                'raw_message' => $message,
+                'stack_trace' => $stackTrace,
+                'has_stack' => !is_null($stackTrace)
+            ];
+        }
+        
+        // Sort by timestamp desc
+        usort($logs, function($a, $b) {
+            return strcmp($b['timestamp'], $a['timestamp']);
         });
+        
+        // Convert to collection and paginate
+        return collect($logs)->paginate(50);
+    }
 
-        window.addEventListener('notify', event => {
-            const toast = new bootstrap.Toast(document.getElementById('notificationToast'));
-            document.querySelector('#notificationToast .toast-body').textContent = event.detail.message;
-            document.querySelector('#notificationToast').className = `toast align-items-center text-white bg-${event.detail.type === 'error' ? 'danger' : 'success'} border-0`;
-            toast.show();
-        });
-    </script>
-
-    {{-- Toast Notification --}}
-    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
-        <div id="notificationToast" class="toast" role="alert">
-            <div class="d-flex">
-                <div class="toast-body"></div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-            </div>
-        </div>
-    </div>
-    @endpush
-
-    @push('styles')
-    <style>
-        /* Dark Mode Support */
-        @media (prefers-color-scheme: dark) {
-            .card {
-                background-color: var(--bs-dark);
-                color: var(--bs-light);
-            }
-            
-            .table {
-                color: var(--bs-light);
-            }
-            
-            .list-group-item {
-                background-color: var(--bs-dark);
-                color: var(--bs-light);
-                border-color: var(--bs-gray-700);
-            }
-            
-            .list-group-item:hover {
-                background-color: var(--bs-gray-800);
-            }
-            
-            .list-group-item.active {
-                background-color: var(--bs-primary);
-                border-color: var(--bs-primary);
-            }
-            
-            .form-control, .form-select {
-                background-color: var(--bs-gray-800);
-                color: var(--bs-light);
-                border-color: var(--bs-gray-700);
-            }
-            
-            .input-group-text {
-                background-color: var(--bs-gray-700);
-                color: var(--bs-light);
-                border-color: var(--bs-gray-700);
-            }
-            
-            .modal-content {
-                background-color: var(--bs-dark);
-                color: var(--bs-light);
-            }
-            
-            .alert-info {
-                background-color: rgba(13, 110, 253, 0.1);
-                color: var(--bs-info);
-                border-color: var(--bs-info);
-            }
+    protected function formatMessage($message)
+    {
+        // Remove stack trace for preview
+        $message = preg_replace('/Stack trace:.*$/s', '', $message);
+        
+        // Truncate long messages
+        if (strlen($message) > 300) {
+            $message = substr($message, 0, 300) . '...';
         }
-
-        /* Custom Scrollbar */
-        .list-group::-webkit-scrollbar {
-            width: 8px;
+        
+        // Highlight important patterns
+        $patterns = [
+            // File paths
+            '/([A-Za-z]:)?([\/\\\\][\w.-]+)+\.(php|blade\.php|js|css)/' => '<code class="text-info">$0</code>',
+            // Line numbers
+            '/line (\d+)/' => 'line <strong>$1</strong>',
+            // Class names
+            '/([A-Z][\w\\\\]+Exception|[A-Z][\w\\\\]+Error)/' => '<strong class="text-danger">$1</strong>',
+            // IP addresses
+            '/\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/' => '<code>$0</code>',
+            // URLs
+            '/https?:\/\/[^\s]+/' => '<a href="$0" target="_blank" class="text-primary">$0</a>'
+        ];
+        
+        foreach ($patterns as $pattern => $replacement) {
+            $message = preg_replace($pattern, $replacement, $message);
         }
+        
+        return $message;
+    }
 
-        .list-group::-webkit-scrollbar-track {
-            background: var(--bs-gray-800);
+    protected function formatBytes($bytes, $precision = 2)
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        
+        for ($i = 0; $bytes > 1024; $i++) {
+            $bytes /= 1024;
         }
+        
+        return round($bytes, $precision) . ' ' . $units[$i];
+    }
 
-        .list-group::-webkit-scrollbar-thumb {
-            background: var(--bs-gray-600);
-            border-radius: 4px;
-        }
+    public function getLevelClass($level)
+    {
+        $classes = [
+            'emergency' => 'danger',
+            'alert' => 'danger',
+            'critical' => 'danger',
+            'error' => 'danger',
+            'warning' => 'warning',
+            'notice' => 'info',
+            'info' => 'primary',
+            'debug' => 'secondary'
+        ];
+        
+        return $classes[$level] ?? 'secondary';
+    }
 
-        .list-group::-webkit-scrollbar-thumb:hover {
-            background: var(--bs-gray-500);
-        }
-
-        /* Animations */
-        .badge {
-            transition: all 0.3s ease;
-        }
-
-        .btn {
-            transition: all 0.2s ease;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-
-        .btn-success i.bi-arrow-repeat {
-            animation: pulse 2s infinite;
-        }
-    </style>
-    @endpush
-</x-app-layout>
-```
-
-</div>
+    public function getLevelIcon($level)
+    {
+        $icons = [
+            'emergency' => 'bi-exclamation-octagon-fill',
+            'alert' => 'bi-exclamation-triangle-fill',
+            'critical' => 'bi-x-circle-fill',
+            'error' => 'bi-x-circle',
+            'warning' => 'bi-exclamation-triangle',
+            'notice' => 'bi-info-circle',
+            'info' => 'bi-info',
+            'debug' => 'bi-bug'
+        ];
+        
+        return $icons[$level] ?? 'bi-file-text';
+    }
+}
