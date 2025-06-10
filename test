@@ -1,0 +1,364 @@
+<div>
+    <x-app-layout>
+        <x-app-content>
+            <x-app-marginal>
+                <div class="d-flex justify-content-between align-items-center">
+                    <h1 class="h3 mb-0">
+                        <i class="bi bi-file-earmark-text"></i> Error Log Viewer
+                    </h1>
+                    <div>
+                        <button wire:click="toggleAutoRefresh" 
+                                class="btn btn-sm {{ $autoRefresh ? 'btn-success' : 'btn-outline-secondary' }}">
+                            <i class="bi {{ $autoRefresh ? 'bi-arrow-repeat' : 'bi-pause' }}"></i>
+                            {{ $autoRefresh ? 'Auto-Refresh An' : 'Auto-Refresh Aus' }}
+                        </button>
+                    </div>
+                </div>
+            </x-app-marginal>
+
+```
+        <div class="container-fluid py-4">
+            <div class="row">
+                {{-- Sidebar mit Log-Dateien --}}
+                <div class="col-lg-3 mb-4">
+                    <div class="card shadow-sm">
+                        <div class="card-header bg-gradient bg-dark text-white">
+                            <h5 class="mb-0">
+                                <i class="bi bi-files"></i> Log Files
+                                <span class="badge bg-light text-dark float-end">{{ count($files) }}</span>
+                            </h5>
+                        </div>
+                        <div class="list-group list-group-flush" style="max-height: 70vh; overflow-y: auto;">
+                            @forelse($files as $file)
+                                <button wire:click="selectFile('{{ $file['name'] }}')" 
+                                        class="list-group-item list-group-item-action {{ $currentFile === $file['name'] ? 'active' : '' }}">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div class="me-2 text-start">
+                                            <div class="fw-bold text-truncate" style="max-width: 180px;">
+                                                {{ $file['name'] }}
+                                            </div>
+                                            <small class="{{ $currentFile === $file['name'] ? 'text-white-50' : 'text-muted' }}">
+                                                {{ $file['last_modified_human'] }}
+                                            </small>
+                                        </div>
+                                        <div class="text-end">
+                                            <span class="badge {{ $currentFile === $file['name'] ? 'bg-light text-dark' : 'bg-secondary' }} rounded-pill">
+                                                {{ $file['size'] }}
+                                            </span>
+                                            @if($file['size_raw'] > 10485760) {{-- > 10MB --}}
+                                                <br>
+                                                <small class="text-warning">
+                                                    <i class="bi bi-exclamation-triangle"></i>
+                                                </small>
+                                            @endif
+                                        </div>
+                                    </div>
+                                </button>
+                            @empty
+                                <div class="list-group-item">
+                                    <em class="text-muted">Keine Log-Dateien gefunden</em>
+                                </div>
+                            @endforelse
+                        </div>
+                    </div>
+                </div>
+
+                {{-- Hauptbereich mit Logs --}}
+                <div class="col-lg-9">
+                    @if($currentFile)
+                        {{-- Toolbar --}}
+                        <div class="card shadow-sm mb-3">
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    {{-- Search --}}
+                                    <div class="col-md-4">
+                                        <div class="input-group">
+                                            <span class="input-group-text">
+                                                <i class="bi bi-search"></i>
+                                            </span>
+                                            <input type="text" 
+                                                   wire:model.debounce.300ms="search" 
+                                                   class="form-control" 
+                                                   placeholder="Suchen...">
+                                            @if($search)
+                                                <button wire:click="$set('search', '')" 
+                                                        class="btn btn-outline-secondary">
+                                                    <i class="bi bi-x"></i>
+                                                </button>
+                                            @endif
+                                        </div>
+                                    </div>
+
+                                    {{-- Level Filter --}}
+                                    <div class="col-md-3">
+                                        <select wire:model="level" class="form-select">
+                                            <option value="all">Alle Level</option>
+                                            <option value="emergency">Emergency</option>
+                                            <option value="alert">Alert</option>
+                                            <option value="critical">Critical</option>
+                                            <option value="error">Error</option>
+                                            <option value="warning">Warning</option>
+                                            <option value="notice">Notice</option>
+                                            <option value="info">Info</option>
+                                            <option value="debug">Debug</option>
+                                        </select>
+                                    </div>
+
+                                    {{-- Actions --}}
+                                    <div class="col-md-5 text-end">
+                                        <button wire:click="downloadFile('{{ $currentFile }}')" 
+                                                class="btn btn-primary btn-sm">
+                                            <i class="bi bi-download"></i> Download
+                                        </button>
+                                        <button wire:click="clearFile('{{ $currentFile }}')"
+                                                onclick="return confirm('Wirklich alle Logs in dieser Datei löschen?')"
+                                                class="btn btn-warning btn-sm">
+                                            <i class="bi bi-eraser"></i> Leeren
+                                        </button>
+                                        <button wire:click="deleteFile('{{ $currentFile }}')"
+                                                onclick="return confirm('Diese Log-Datei wirklich löschen?')"
+                                                class="btn btn-danger btn-sm">
+                                            <i class="bi bi-trash"></i> Löschen
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {{-- File Info --}}
+                        @if($currentFileInfo)
+                            <div class="alert alert-info alert-dismissible fade show" role="alert">
+                                <i class="bi bi-info-circle"></i>
+                                <strong>{{ $currentFileInfo['name'] }}</strong> - 
+                                {{ $currentFileInfo['size'] }} - 
+                                Zuletzt geändert: {{ $currentFileInfo['last_modified'] }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>
+                        @endif
+
+                        {{-- Logs Table --}}
+                        <div class="card shadow-sm">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th width="180">Zeitstempel</th>
+                                            <th width="100">Level</th>
+                                            <th>Nachricht</th>
+                                            <th width="100">Aktionen</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @forelse($logs as $log)
+                                            <tr class="align-middle">
+                                                <td>
+                                                    <small class="text-muted">
+                                                        {{ $log['timestamp'] }}<br>
+                                                        <em>{{ $log['timestamp_human'] }}</em>
+                                                    </small>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-{{ $this->getLevelClass($log['level']) }}">
+                                                        <i class="{{ $this->getLevelIcon($log['level']) }}"></i>
+                                                        {{ strtoupper($log['level']) }}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <div class="text-break" style="max-width: 600px;">
+                                                        {!! $log['message'] !!}
+                                                        @if($log['has_stack'])
+                                                            <br>
+                                                            <small class="text-danger">
+                                                                <i class="bi bi-stack"></i> Stack Trace vorhanden
+                                                            </small>
+                                                        @endif
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <button wire:click="showLogDetails({{ json_encode($log) }})" 
+                                                            class="btn btn-sm btn-outline-primary">
+                                                        <i class="bi bi-eye"></i> Details
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        @empty
+                                            <tr>
+                                                <td colspan="4" class="text-center py-5 text-muted">
+                                                    <i class="bi bi-inbox display-4"></i>
+                                                    <p class="mt-3">Keine Logs gefunden</p>
+                                                </td>
+                                            </tr>
+                                        @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {{-- Pagination --}}
+                            @if($logs->hasPages())
+                                <div class="card-footer">
+                                    {{ $logs->links() }}
+                                </div>
+                            @endif
+                        </div>
+                    @else
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            Keine Log-Datei ausgewählt
+                        </div>
+                    @endif
+                </div>
+            </div>
+        </div>
+
+        {{-- Detail Modal --}}
+        @if($showModal)
+            <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">{{ $modalTitle }}</h5>
+                            <button wire:click="closeModal" type="button" class="btn-close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <pre class="bg-dark text-light p-3 rounded" style="white-space: pre-wrap;">{{ $modalContent }}</pre>
+                        </div>
+                        <div class="modal-footer">
+                            <button wire:click="closeModal" type="button" class="btn btn-secondary">
+                                Schließen
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        @endif
+    </x-app-content>
+
+    @push('scripts')
+    <script>
+        let refreshInterval;
+
+        window.addEventListener('start-refresh', event => {
+            refreshInterval = setInterval(() => {
+                @this.call('$refresh');
+            }, event.detail.interval);
+        });
+
+        window.addEventListener('stop-refresh', event => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        });
+
+        window.addEventListener('notify', event => {
+            const toast = new bootstrap.Toast(document.getElementById('notificationToast'));
+            document.querySelector('#notificationToast .toast-body').textContent = event.detail.message;
+            document.querySelector('#notificationToast').className = `toast align-items-center text-white bg-${event.detail.type === 'error' ? 'danger' : 'success'} border-0`;
+            toast.show();
+        });
+    </script>
+
+    {{-- Toast Notification --}}
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+        <div id="notificationToast" class="toast" role="alert">
+            <div class="d-flex">
+                <div class="toast-body"></div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+            </div>
+        </div>
+    </div>
+    @endpush
+
+    @push('styles')
+    <style>
+        /* Dark Mode Support */
+        @media (prefers-color-scheme: dark) {
+            .card {
+                background-color: var(--bs-dark);
+                color: var(--bs-light);
+            }
+            
+            .table {
+                color: var(--bs-light);
+            }
+            
+            .list-group-item {
+                background-color: var(--bs-dark);
+                color: var(--bs-light);
+                border-color: var(--bs-gray-700);
+            }
+            
+            .list-group-item:hover {
+                background-color: var(--bs-gray-800);
+            }
+            
+            .list-group-item.active {
+                background-color: var(--bs-primary);
+                border-color: var(--bs-primary);
+            }
+            
+            .form-control, .form-select {
+                background-color: var(--bs-gray-800);
+                color: var(--bs-light);
+                border-color: var(--bs-gray-700);
+            }
+            
+            .input-group-text {
+                background-color: var(--bs-gray-700);
+                color: var(--bs-light);
+                border-color: var(--bs-gray-700);
+            }
+            
+            .modal-content {
+                background-color: var(--bs-dark);
+                color: var(--bs-light);
+            }
+            
+            .alert-info {
+                background-color: rgba(13, 110, 253, 0.1);
+                color: var(--bs-info);
+                border-color: var(--bs-info);
+            }
+        }
+
+        /* Custom Scrollbar */
+        .list-group::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .list-group::-webkit-scrollbar-track {
+            background: var(--bs-gray-800);
+        }
+
+        .list-group::-webkit-scrollbar-thumb {
+            background: var(--bs-gray-600);
+            border-radius: 4px;
+        }
+
+        .list-group::-webkit-scrollbar-thumb:hover {
+            background: var(--bs-gray-500);
+        }
+
+        /* Animations */
+        .badge {
+            transition: all 0.3s ease;
+        }
+
+        .btn {
+            transition: all 0.2s ease;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .btn-success i.bi-arrow-repeat {
+            animation: pulse 2s infinite;
+        }
+    </style>
+    @endpush
+</x-app-layout>
+```
+
+</div>
