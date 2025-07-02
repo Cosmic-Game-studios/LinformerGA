@@ -4,68 +4,104 @@ namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
+use Illuminate\Support\Collection;
 
 class ErrorLogController extends Controller
 {
     public function index()
     {
-        $path = storage_path('logs/laravel.log');
+        $logDir = storage_path('logs');
 
-        if (!File::exists($path)) {
-            return view('errorlog.index', ['entries' => []]);
+        // ▼ 1.  Alle *.log-Dateien holen – Daily-Logs heißen i. d. R. laravel-YYYY-MM-DD.log
+        $files = collect(File::files($logDir))
+            ->filter(fn($f) => Str::endsWith($f->getFilename(), '.log'))
+            // Jüngste Datei zuerst (nach Änderungsdatum, nicht nur Name!)
+            ->sortByDesc(fn($f) => $f->getMTime());
+
+        $entries = new Collection;
+
+        // ▼ 2.  Jede Datei parsen, aber nur die letzten 1 000 Zeilen
+        foreach ($files as $file) {
+            $tail = $this->tail($file->getRealPath(), 1000);
+            $entries = $entries->merge($this->splitIntoEntries($tail));
         }
 
-        // --- vollständige Datei holen (max. 5 MB als pragmatische Obergrenze) ---
-        $data = File::size($path) > 5 * 1024 * 1024
-            ? File::get($path, false, null, File::size($path) - 5 * 1024 * 1024) // tail ≈ 5 MB
-            : File::get($path);
+        // ▼ 3.  Einträge global nach Zeit absteigend sortieren
+        $entries = $entries->sortByDesc('datetime')->values();
 
-        $lines   = preg_split('/\R/', $data);
-        $pattern = '/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/';   // Zeilen-Header
+        return view('errorlog.index', compact('entries'));
+    }
 
-        $entries = [];
+    /**
+     * Liest die letzten $lines Zeilen einer (großen) Datei.
+     */
+    protected function tail(string $file, int $lines = 1000): string
+    {
+        $fh   = fopen($file, 'rb');
+        $pos  = -1;
+        $cnt  = 0;
+        $data = '';
+
+        // rückwärts lesen bis genug Zeilen oder Dateianfang
+        while ($cnt < $lines && fseek($fh, $pos, SEEK_END) === 0) {
+            $char = fgetc($fh);
+            if ($char === "\n") {
+                $cnt++;
+            }
+            $data = $char . $data;
+            $pos--;
+            if (ftell($fh) === 0) break;          // Dateianfang erreicht
+        }
+        fclose($fh);
+        return $data;
+    }
+
+    /**
+     * Zerlegt Roh-Text in einzelne Log-Einträge (Header + Stack-Trace).
+     */
+    protected function splitIntoEntries(string $raw): Collection
+    {
+        $lines   = preg_split('/\R/', $raw);
+        $pattern = '/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/';
+
+        $entries = collect();
         $current = ['header' => '', 'body' => []];
 
         foreach ($lines as $line) {
-            if (preg_match($pattern, $line)) {          // neue Log-Nachricht
-                if ($current['header']) {               // vorigen Block abschließen
-                    $entries[] = $this->parseEntry($current);
+            if (preg_match($pattern, $line)) {          // neuer Header
+                if ($current['header']) {
+                    $entries->push($this->formatEntry($current));
                 }
                 $current = ['header' => $line, 'body' => []];
             } else {
                 $current['body'][] = $line;
             }
         }
-        // letzten Block hinzufügen
         if ($current['header']) {
-            $entries[] = $this->parseEntry($current);
+            $entries->push($this->formatEntry($current));
         }
 
-        // jüngste Einträge zuerst
-        $entries = array_reverse($entries);
-
-        return view('errorlog.index', compact('entries'));
+        return $entries;
     }
 
-    protected function parseEntry(array $raw): array
+    /**
+     * Extrahiert Datum, Level, Summary & Badge-Farbe aus einem Roh-Eintrag.
+     */
+    protected function formatEntry(array $raw): array
     {
-        // Split header: [date] ENV.LEVEL: message
         if (preg_match('/^\[(.*?)\]\s+([^\:]+):\s*(.*)$/', $raw['header'], $m)) {
             $datetime = $m[1];
             $level    = $m[2];
             $summary  = $m[3];
         } else {
-            // Fallback
             $datetime = '';
             $level    = 'INFO';
             $summary  = $raw['header'];
         }
 
-        // Bootstrap-Badge nach Log-Level
-        $badge = Str::contains($level, 'ERROR')   ? 'danger'
-               : (Str::contains($level, 'WARNING')? 'warning'
+        $badge = Str::contains($level, 'ERROR')    ? 'danger'
                : (Str::contains($level, 'CRITICAL')? 'danger'
-               : 'secondary'));
+               : (Str::contains($level, 'WARNING') ? 'warning' : 'secondary'));
 
         return [
             'datetime' => $datetime,
