@@ -1,584 +1,78 @@
-# Laravel Error Log Viewer Module
-
-## 1. LogViewerController.php
-
-```php
 <?php
 
 namespace App\Http\Controllers;
 
-use App\Services\LogReaderService;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Response;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 
-class LogViewerController extends Controller
+class ErrorLogController extends Controller
 {
-    protected $logReader;
-
-    public function __construct(LogReaderService $logReader)
-    {
-        $this->logReader = $logReader;
-    }
-
-    /**
-     * Zeigt die Übersicht aller Log-Dateien
-     */
     public function index()
     {
-        $logFiles = $this->logReader->getLogFiles();
-        
-        return view('log-viewer.index', compact('logFiles'));
-    }
+        $path = storage_path('logs/laravel.log');
 
-    /**
-     * Zeigt den Inhalt einer spezifischen Log-Datei
-     */
-    public function show(Request $request, $filename)
-    {
-        $logContent = $this->logReader->getLogContent($filename);
-        $parsedLogs = $this->logReader->parseLogContent($logContent);
-        
-        // Filterung nach Log-Level
-        $level = $request->get('level');
-        if ($level) {
-            $parsedLogs = array_filter($parsedLogs, function($log) use ($level) {
-                return strtolower($log['level']) === strtolower($level);
-            });
-        }
-
-        // Pagination
-        $page = $request->get('page', 1);
-        $perPage = 50;
-        $total = count($parsedLogs);
-        $parsedLogs = array_slice($parsedLogs, ($page - 1) * $perPage, $perPage);
-
-        $pagination = [
-            'total' => $total,
-            'current_page' => $page,
-            'per_page' => $perPage,
-            'last_page' => ceil($total / $perPage)
-        ];
-
-        return view('log-viewer.show', compact('filename', 'parsedLogs', 'level', 'pagination'));
-    }
-
-    /**
-     * Löscht eine Log-Datei
-     */
-    public function destroy($filename)
-    {
-        if ($this->logReader->deleteLogFile($filename)) {
-            return redirect()->route('log-viewer.index')
-                ->with('success', 'Log-Datei wurde erfolgreich gelöscht.');
-        }
-
-        return redirect()->route('log-viewer.index')
-            ->with('error', 'Log-Datei konnte nicht gelöscht werden.');
-    }
-
-    /**
-     * Lädt eine Log-Datei herunter
-     */
-    public function download($filename)
-    {
-        $path = storage_path('logs/' . $filename);
-        
-        if (!file_exists($path)) {
-            abort(404);
-        }
-
-        return Response::download($path);
-    }
-
-    /**
-     * Leert eine Log-Datei
-     */
-    public function clear($filename)
-    {
-        if ($this->logReader->clearLogFile($filename)) {
-            return redirect()->route('log-viewer.show', $filename)
-                ->with('success', 'Log-Datei wurde geleert.');
-        }
-
-        return redirect()->route('log-viewer.show', $filename)
-            ->with('error', 'Log-Datei konnte nicht geleert werden.');
-    }
-}
-```
-
-## 2. LogReaderService.php
-
-```php
-<?php
-
-namespace App\Services;
-
-use Illuminate\Support\Facades\File;
-
-class LogReaderService
-{
-    protected $logPath;
-
-    public function __construct()
-    {
-        $this->logPath = storage_path('logs');
-    }
-
-    /**
-     * Holt alle Log-Dateien aus dem Log-Verzeichnis
-     */
-    public function getLogFiles()
-    {
-        $files = File::glob($this->logPath . '/*.log');
-        $logFiles = [];
-
-        foreach ($files as $file) {
-            $logFiles[] = [
-                'filename' => basename($file),
-                'size' => $this->formatBytes(filesize($file)),
-                'last_modified' => date('Y-m-d H:i:s', filemtime($file)),
-                'path' => $file
-            ];
-        }
-
-        // Sortiere nach Änderungsdatum (neueste zuerst)
-        usort($logFiles, function($a, $b) {
-            return filemtime($b['path']) - filemtime($a['path']);
-        });
-
-        return $logFiles;
-    }
-
-    /**
-     * Liest den Inhalt einer Log-Datei
-     */
-    public function getLogContent($filename)
-    {
-        $path = $this->logPath . '/' . $filename;
-        
         if (!File::exists($path)) {
-            return '';
+            return view('errorlog.index', ['entries' => []]);
         }
 
-        return File::get($path);
-    }
+        // --- vollständige Datei holen (max. 5 MB als pragmatische Obergrenze) ---
+        $data = File::size($path) > 5 * 1024 * 1024
+            ? File::get($path, false, null, File::size($path) - 5 * 1024 * 1024) // tail ≈ 5 MB
+            : File::get($path);
 
-    /**
-     * Parsed den Log-Inhalt in strukturierte Daten
-     */
-    public function parseLogContent($content)
-    {
-        $pattern = '/\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (\w+)\.(\w+): (.*?)(?=\[|$)/s';
-        preg_match_all($pattern, $content, $matches, PREG_SET_ORDER);
+        $lines   = preg_split('/\R/', $data);
+        $pattern = '/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/';   // Zeilen-Header
 
-        $logs = [];
-        
-        foreach ($matches as $match) {
-            $logs[] = [
-                'timestamp' => $match[1],
-                'environment' => $match[2],
-                'level' => $match[3],
-                'message' => trim($match[4]),
-                'level_class' => $this->getLevelClass($match[3])
-            ];
+        $entries = [];
+        $current = ['header' => '', 'body' => []];
+
+        foreach ($lines as $line) {
+            if (preg_match($pattern, $line)) {          // neue Log-Nachricht
+                if ($current['header']) {               // vorigen Block abschließen
+                    $entries[] = $this->parseEntry($current);
+                }
+                $current = ['header' => $line, 'body' => []];
+            } else {
+                $current['body'][] = $line;
+            }
+        }
+        // letzten Block hinzufügen
+        if ($current['header']) {
+            $entries[] = $this->parseEntry($current);
         }
 
-        // Neueste Einträge zuerst
-        return array_reverse($logs);
+        // jüngste Einträge zuerst
+        $entries = array_reverse($entries);
+
+        return view('errorlog.index', compact('entries'));
     }
 
-    /**
-     * Löscht eine Log-Datei
-     */
-    public function deleteLogFile($filename)
+    protected function parseEntry(array $raw): array
     {
-        $path = $this->logPath . '/' . $filename;
-        
-        if (File::exists($path)) {
-            return File::delete($path);
+        // Split header: [date] ENV.LEVEL: message
+        if (preg_match('/^\[(.*?)\]\s+([^\:]+):\s*(.*)$/', $raw['header'], $m)) {
+            $datetime = $m[1];
+            $level    = $m[2];
+            $summary  = $m[3];
+        } else {
+            // Fallback
+            $datetime = '';
+            $level    = 'INFO';
+            $summary  = $raw['header'];
         }
 
-        return false;
-    }
+        // Bootstrap-Badge nach Log-Level
+        $badge = Str::contains($level, 'ERROR')   ? 'danger'
+               : (Str::contains($level, 'WARNING')? 'warning'
+               : (Str::contains($level, 'CRITICAL')? 'danger'
+               : 'secondary'));
 
-    /**
-     * Leert eine Log-Datei
-     */
-    public function clearLogFile($filename)
-    {
-        $path = $this->logPath . '/' . $filename;
-        
-        if (File::exists($path)) {
-            return File::put($path, '') !== false;
-        }
-
-        return false;
-    }
-
-    /**
-     * Formatiert Bytes in lesbare Größe
-     */
-    private function formatBytes($size, $precision = 2)
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-
-        for ($i = 0; $size > 1024; $i++) {
-            $size /= 1024;
-        }
-
-        return round($size, $precision) . ' ' . $units[$i];
-    }
-
-    /**
-     * Gibt die CSS-Klasse für das Log-Level zurück
-     */
-    private function getLevelClass($level)
-    {
-        $classes = [
-            'EMERGENCY' => 'danger',
-            'ALERT' => 'danger',
-            'CRITICAL' => 'danger',
-            'ERROR' => 'danger',
-            'WARNING' => 'warning',
-            'NOTICE' => 'info',
-            'INFO' => 'primary',
-            'DEBUG' => 'secondary'
+        return [
+            'datetime' => $datetime,
+            'level'    => $level,
+            'badge'    => $badge,
+            'summary'  => $summary,
+            'full'     => trim($raw['header']."\n".implode("\n", $raw['body'])),
         ];
-
-        return $classes[strtoupper($level)] ?? 'secondary';
     }
 }
-```
-
-## 3. Routes (web.php)
-
-```php
-// Log Viewer Routen
-Route::prefix('log-viewer')->middleware(['auth'])->group(function () {
-    Route::get('/', [App\Http\Controllers\LogViewerController::class, 'index'])
-        ->name('log-viewer.index');
-    
-    Route::get('/{filename}', [App\Http\Controllers\LogViewerController::class, 'show'])
-        ->name('log-viewer.show');
-    
-    Route::delete('/{filename}', [App\Http\Controllers\LogViewerController::class, 'destroy'])
-        ->name('log-viewer.destroy');
-    
-    Route::get('/{filename}/download', [App\Http\Controllers\LogViewerController::class, 'download'])
-        ->name('log-viewer.download');
-    
-    Route::post('/{filename}/clear', [App\Http\Controllers\LogViewerController::class, 'clear'])
-        ->name('log-viewer.clear');
-});
-```
-
-## 4. Views
-
-### resources/views/log-viewer/index.blade.php
-
-```blade
-@extends('layouts.app')
-
-@section('content')
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fas fa-file-alt"></i> Log-Dateien Übersicht
-                    </h3>
-                </div>
-                <div class="card-body">
-                    @if(session('success'))
-                        <div class="alert alert-success alert-dismissible fade show" role="alert">
-                            {{ session('success') }}
-                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                        </div>
-                    @endif
-
-                    @if(session('error'))
-                        <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                            {{ session('error') }}
-                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                        </div>
-                    @endif
-
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Dateiname</th>
-                                    <th>Größe</th>
-                                    <th>Letzte Änderung</th>
-                                    <th>Aktionen</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @forelse($logFiles as $logFile)
-                                    <tr>
-                                        <td>
-                                            <i class="fas fa-file-code text-muted me-2"></i>
-                                            {{ $logFile['filename'] }}
-                                        </td>
-                                        <td>{{ $logFile['size'] }}</td>
-                                        <td>{{ $logFile['last_modified'] }}</td>
-                                        <td>
-                                            <a href="{{ route('log-viewer.show', $logFile['filename']) }}" 
-                                               class="btn btn-sm btn-primary">
-                                                <i class="fas fa-eye"></i> Anzeigen
-                                            </a>
-                                            
-                                            <a href="{{ route('log-viewer.download', $logFile['filename']) }}" 
-                                               class="btn btn-sm btn-success">
-                                                <i class="fas fa-download"></i> Download
-                                            </a>
-                                            
-                                            <form method="POST" 
-                                                  action="{{ route('log-viewer.destroy', $logFile['filename']) }}" 
-                                                  class="d-inline"
-                                                  onsubmit="return confirm('Möchten Sie diese Log-Datei wirklich löschen?');">
-                                                @csrf
-                                                @method('DELETE')
-                                                <button type="submit" class="btn btn-sm btn-danger">
-                                                    <i class="fas fa-trash"></i> Löschen
-                                                </button>
-                                            </form>
-                                        </td>
-                                    </tr>
-                                @empty
-                                    <tr>
-                                        <td colspan="4" class="text-center text-muted">
-                                            Keine Log-Dateien gefunden.
-                                        </td>
-                                    </tr>
-                                @endforelse
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-@endsection
-```
-
-### resources/views/log-viewer/show.blade.php
-
-```blade
-@extends('layouts.app')
-
-@section('content')
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h3 class="card-title">
-                            <i class="fas fa-file-alt"></i> {{ $filename }}
-                        </h3>
-                        
-                        <div class="btn-group">
-                            <a href="{{ route('log-viewer.index') }}" class="btn btn-secondary btn-sm">
-                                <i class="fas fa-arrow-left"></i> Zurück
-                            </a>
-                            
-                            <a href="{{ route('log-viewer.download', $filename) }}" class="btn btn-success btn-sm">
-                                <i class="fas fa-download"></i> Download
-                            </a>
-                            
-                            <form method="POST" 
-                                  action="{{ route('log-viewer.clear', $filename) }}" 
-                                  class="d-inline"
-                                  onsubmit="return confirm('Möchten Sie diese Log-Datei wirklich leeren?');">
-                                @csrf
-                                <button type="submit" class="btn btn-warning btn-sm">
-                                    <i class="fas fa-broom"></i> Leeren
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="card-body">
-                    @if(session('success'))
-                        <div class="alert alert-success alert-dismissible fade show" role="alert">
-                            {{ session('success') }}
-                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                        </div>
-                    @endif
-
-                    <!-- Filter -->
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <div class="btn-group" role="group">
-                                <a href="{{ route('log-viewer.show', $filename) }}" 
-                                   class="btn btn-sm {{ !$level ? 'btn-primary' : 'btn-outline-primary' }}">
-                                    Alle
-                                </a>
-                                
-                                @foreach(['emergency', 'alert', 'critical', 'error', 'warning', 'notice', 'info', 'debug'] as $lvl)
-                                    <a href="{{ route('log-viewer.show', [$filename, 'level' => $lvl]) }}" 
-                                       class="btn btn-sm {{ $level == $lvl ? 'btn-primary' : 'btn-outline-primary' }}">
-                                        {{ ucfirst($lvl) }}
-                                    </a>
-                                @endforeach
-                            </div>
-                        </div>
-                        
-                        <div class="col-md-6 text-end">
-                            <span class="text-muted">
-                                Zeige {{ count($parsedLogs) }} von {{ $pagination['total'] }} Einträgen
-                            </span>
-                        </div>
-                    </div>
-
-                    <!-- Log Einträge -->
-                    <div class="log-entries">
-                        @forelse($parsedLogs as $log)
-                            <div class="card mb-2 border-{{ $log['level_class'] }}">
-                                <div class="card-header py-2 bg-{{ $log['level_class'] }} bg-opacity-10">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <span class="badge bg-{{ $log['level_class'] }}">
-                                                {{ strtoupper($log['level']) }}
-                                            </span>
-                                            <small class="text-muted ms-2">
-                                                {{ $log['timestamp'] }}
-                                            </small>
-                                            <small class="text-muted ms-2">
-                                                {{ $log['environment'] }}
-                                            </small>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="card-body py-2">
-                                    <pre class="mb-0" style="white-space: pre-wrap;">{{ $log['message'] }}</pre>
-                                </div>
-                            </div>
-                        @empty
-                            <div class="alert alert-info">
-                                Keine Log-Einträge gefunden.
-                            </div>
-                        @endforelse
-                    </div>
-
-                    <!-- Pagination -->
-                    @if($pagination['last_page'] > 1)
-                        <nav class="mt-4">
-                            <ul class="pagination justify-content-center">
-                                <li class="page-item {{ $pagination['current_page'] == 1 ? 'disabled' : '' }}">
-                                    <a class="page-link" 
-                                       href="{{ route('log-viewer.show', [$filename, 'page' => $pagination['current_page'] - 1, 'level' => $level]) }}">
-                                        Zurück
-                                    </a>
-                                </li>
-                                
-                                @for($i = 1; $i <= $pagination['last_page']; $i++)
-                                    @if($i == 1 || $i == $pagination['last_page'] || ($i >= $pagination['current_page'] - 2 && $i <= $pagination['current_page'] + 2))
-                                        <li class="page-item {{ $i == $pagination['current_page'] ? 'active' : '' }}">
-                                            <a class="page-link" 
-                                               href="{{ route('log-viewer.show', [$filename, 'page' => $i, 'level' => $level]) }}">
-                                                {{ $i }}
-                                            </a>
-                                        </li>
-                                    @elseif($i == $pagination['current_page'] - 3 || $i == $pagination['current_page'] + 3)
-                                        <li class="page-item disabled">
-                                            <span class="page-link">...</span>
-                                        </li>
-                                    @endif
-                                @endfor
-                                
-                                <li class="page-item {{ $pagination['current_page'] == $pagination['last_page'] ? 'disabled' : '' }}">
-                                    <a class="page-link" 
-                                       href="{{ route('log-viewer.show', [$filename, 'page' => $pagination['current_page'] + 1, 'level' => $level]) }}">
-                                        Weiter
-                                    </a>
-                                </li>
-                            </ul>
-                        </nav>
-                    @endif
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<style>
-    .log-entries pre {
-        font-family: 'Courier New', monospace;
-        font-size: 0.875rem;
-        margin: 0;
-        overflow-x: auto;
-    }
-    
-    .bg-opacity-10 {
-        opacity: 0.1;
-    }
-</style>
-@endsection
-```
-
-## 5. Service Provider registrieren
-
-In `config/app.php` den Service Provider registrieren (falls nicht automatisch):
-
-```php
-'providers' => [
-    // ...
-    App\Providers\LogViewerServiceProvider::class,
-],
-```
-
-## 6. LogViewerServiceProvider.php (optional)
-
-```php
-<?php
-
-namespace App\Providers;
-
-use Illuminate\Support\ServiceProvider;
-use App\Services\LogReaderService;
-
-class LogViewerServiceProvider extends ServiceProvider
-{
-    public function register()
-    {
-        $this->app->singleton(LogReaderService::class, function ($app) {
-            return new LogReaderService();
-        });
-    }
-
-    public function boot()
-    {
-        //
-    }
-}
-```
-
-## Features
-
-- **Übersicht aller Log-Dateien** mit Größe und letztem Änderungsdatum
-- **Detailansicht** einzelner Log-Dateien mit farblicher Hervorhebung nach Log-Level
-- **Filterung** nach Log-Level (Emergency, Alert, Critical, Error, Warning, Notice, Info, Debug)
-- **Pagination** für große Log-Dateien
-- **Download** von Log-Dateien
-- **Löschen** von Log-Dateien
-- **Leeren** von Log-Dateien
-- **Responsive Design** mit Bootstrap 5
-- **Keine Datenbankzugriffe** - alles wird direkt aus dem Dateisystem gelesen
-
-## Installation
-
-1. Kopieren Sie alle Dateien in Ihr Laravel-Projekt
-1. Fügen Sie die Routen zu Ihrer `routes/web.php` hinzu
-1. Erstellen Sie die Views im `resources/views/log-viewer/` Verzeichnis
-1. Navigieren Sie zu `/log-viewer` in Ihrer Anwendung
-
-## Sicherheit
-
-- Die Routen sind mit `auth` Middleware geschützt
-- Zusätzliche Berechtigungen können bei Bedarf hinzugefügt werden
-- Sensible Informationen in den Logs sollten entsprechend behandelt werden
