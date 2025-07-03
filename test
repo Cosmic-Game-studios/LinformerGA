@@ -1,385 +1,73 @@
-@php
-$getLevelColor = function($level) {
-$colors = [
-‘emergency’ => ‘danger’,
-‘alert’ => ‘danger’,
-‘critical’ => ‘danger’,
-‘error’ => ‘danger’,
-‘warning’ => ‘warning’,
-‘notice’ => ‘info’,
-‘info’ => ‘info’,
-‘debug’ => ‘secondary’
-];
-return $colors[$level] ?? ‘secondary’;
-};
-@endphp
-
+{{-- Layout-Gerüst deines Projekts --}}
 <x-app-layout>
-    <x-slot name="header">
-        <h2 class="h4 mb-0">
-            <i class="fas fa-file-alt me-2"></i>
-            Error Log Viewer
-        </h2>
-    </x-slot>
-
-```
-<div class="row g-0 h-100">
-    <x-app-marginal>
-        <div class="h-100 border-end bg-light">
-            <div class="p-3 border-bottom bg-white">
-                <h5 class="mb-0">
-                    <i class="fas fa-list me-2"></i>
-                    Log Files
-                </h5>
-            </div>
-            
-            <div class="overflow-auto" style="height: calc(100vh - 200px);">
-                @forelse($logFiles as $file)
-                    <div class="log-file-item p-3 border-bottom cursor-pointer {{ $selectedFile === $file['filename'] ? 'bg-primary text-white' : 'hover-bg-light' }}" 
-                         data-filename="{{ $file['filename'] }}">
-                        <div class="d-flex align-items-center justify-content-between">
-                            <div class="flex-grow-1">
-                                <div class="fw-bold small">{{ $file['filename'] }}</div>
-                                <div class="text-muted small">
-                                    {{ $file['modified']->format('d.m.Y H:i') }}
-                                </div>
-                            </div>
-                            <div class="text-end">
-                                <div class="badge bg-secondary">{{ $file['size'] }}</div>
-                            </div>
-                        </div>
-                    </div>
-                @empty
-                    <div class="p-3 text-muted text-center">
-                        <i class="fas fa-folder-open fa-2x mb-2"></i>
-                        <div>No log files found</div>
-                    </div>
-                @endforelse
-            </div>
+    {{-- Seitenmarginal (linke Spalte) --}}
+    <x-app-marginal class="bg-light border-end">
+        <div class="list-group list-group-flush">
+            @foreach($files as $file)
+                @php $active = $currentFile === $file->getFilename(); @endphp
+                <a href="{{ route('logviewer.index', ['file' => $file->getFilename()]) }}"
+                   class="list-group-item list-group-item-action d-flex justify-content-between
+                          align-items-center {{ $active ? 'active' : '' }}">
+                    <span>
+                        <i class="fas fa-file-alt me-2"></i>
+                        {{ $file->getFilename() }}
+                    </span>
+                    <small class="opacity-75">
+                        {{ number_format($file->getSize() / 1024, 1) }} KB
+                    </small>
+                </a>
+            @endforeach
         </div>
     </x-app-marginal>
 
+    {{-- Haupt-Content --}}
     <x-app-content>
-        <div class="h-100 d-flex flex-column">
-            @if($selectedFile)
-                <div class="d-flex justify-content-between align-items-center p-3 border-bottom bg-white">
-                    <div>
-                        <h5 class="mb-0">{{ $selectedFile }}</h5>
-                        @if($logContent)
-                            <small class="text-muted">
-                                Page {{ $currentPage }} of {{ $totalPages }}
-                            </small>
-                        @endif
-                    </div>
-                    <div class="btn-group">
-                        <button class="btn btn-sm btn-outline-primary" id="refreshBtn">
-                            <i class="fas fa-sync-alt"></i> Refresh
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" id="clearBtn" data-filename="{{ $selectedFile }}">
-                            <i class="fas fa-trash"></i> Clear
-                        </button>
-                    </div>
-                </div>
+        <div class="card shadow-sm mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="fas fa-bug me-2"></i>
+                    {{ $currentFile }}
+                </span>
 
-                <div class="flex-grow-1 overflow-auto p-3" id="logContent">
-                    @if($logContent)
-                        @foreach($logContent as $entry)
-                            <div class="log-entry mb-3 p-3 border rounded">
-                                <div class="d-flex justify-content-between align-items-start mb-2">
-                                    <div class="d-flex align-items-center">
-                                        <span class="badge bg-{{ $getLevelColor($entry['level']) }} me-2">
-                                            {{ strtoupper($entry['level']) }}
-                                        </span>
-                                        @if($entry['timestamp'])
-                                            <small class="text-muted">
-                                                {{ $entry['timestamp']->format('d.m.Y H:i:s') }}
-                                            </small>
-                                        @endif
-                                    </div>
-                                    <button class="btn btn-sm btn-outline-secondary toggle-context" data-bs-toggle="collapse" data-bs-target="#context-{{ $loop->index }}">
-                                        <i class="fas fa-chevron-down"></i>
-                                    </button>
-                                </div>
-                                
-                                <div class="log-message">
-                                    <pre class="mb-0 text-wrap">{{ $entry['message'] }}</pre>
-                                </div>
+                {{-- Download-Button --}}
+                <a href="{{ route('logviewer.download', $currentFile) }}"
+                   class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-download"></i> Download
+                </a>
+            </div>
 
-                                @if(!empty($entry['context']))
-                                    <div class="collapse mt-2" id="context-{{ $loop->index }}">
-                                        <div class="card card-body bg-light">
-                                            <pre class="mb-0 small text-wrap">{{ implode("\n", $entry['context']) }}</pre>
-                                        </div>
-                                    </div>
-                                @endif
-                            </div>
-                        @endforeach
+            <div class="card-body p-0" style="max-height:70vh; overflow:auto">
+                <pre class="m-0 px-3 py-2">
+@foreach($logs as $entry)
+<span class="
+    @switch($entry['level'])
+        @case('error')   text-danger fw-bold @break
+        @case('warning') text-warning fw-bold @break
+        @case('critical') text-danger fw-bold bg-danger-subtle @break
+        @default text-body
+    @endswitch
+">
+{{ $entry['raw'] }}
+</span>
+@endforeach
+                </pre>
+            </div>
 
-                        @if($totalPages > 1)
-                            <div class="d-flex justify-content-center mt-4">
-                                <nav>
-                                    <ul class="pagination">
-                                        @if($currentPage > 1)
-                                            <li class="page-item">
-                                                <a class="page-link" href="#" data-page="{{ $currentPage - 1 }}">Previous</a>
-                                            </li>
-                                        @endif
-
-                                        @for($i = max(1, $currentPage - 2); $i <= min($totalPages, $currentPage + 2); $i++)
-                                            <li class="page-item {{ $i === $currentPage ? 'active' : '' }}">
-                                                <a class="page-link" href="#" data-page="{{ $i }}">{{ $i }}</a>
-                                            </li>
-                                        @endfor
-
-                                        @if($currentPage < $totalPages)
-                                            <li class="page-item">
-                                                <a class="page-link" href="#" data-page="{{ $currentPage + 1 }}">Next</a>
-                                            </li>
-                                        @endif
-                                    </ul>
-                                </nav>
-                            </div>
-                        @endif
-                    @else
-                        <div class="text-center text-muted py-5">
-                            <i class="fas fa-file-alt fa-3x mb-3"></i>
-                            <div>Loading log content...</div>
-                        </div>
-                    @endif
-                </div>
-            @else
-                <div class="d-flex align-items-center justify-content-center h-100">
-                    <div class="text-center text-muted">
-                        <i class="fas fa-mouse-pointer fa-3x mb-3"></i>
-                        <h5>Select a log file to view</h5>
-                        <p>Click on a log file from the sidebar to display its contents</p>
-                    </div>
-                </div>
-            @endif
+            {{-- Pagination --}}
+            <div class="card-footer d-flex justify-content-center">
+                {{ $logs->withQueryString()->links() }}
+            </div>
         </div>
     </x-app-content>
-</div>
+</x-app-layout>
 
+{{-- 🔌  Ergänzende JS-Snippets (z.B. Auto-Scroll an Anfang) --}}
 @push('scripts')
 <script>
-    $(document).ready(function() {
-        let currentFile = '{{ $selectedFile }}';
-
-        // File selection
-        $('.log-file-item').click(function() {
-            const filename = $(this).data('filename');
-            loadLogFile(filename);
-        });
-
-        // Pagination
-        $(document).on('click', '.page-link', function(e) {
-            e.preventDefault();
-            const page = $(this).data('page');
-            if (page && currentFile) {
-                loadLogFile(currentFile, page);
-            }
-        });
-
-        // Refresh button
-        $('#refreshBtn').click(function() {
-            if (currentFile) {
-                loadLogFile(currentFile);
-            }
-        });
-
-        // Clear button
-        $('#clearBtn').click(function() {
-            const filename = $(this).data('filename');
-            if (confirm('Are you sure you want to clear this log file?')) {
-                clearLogFile(filename);
-            }
-        });
-
-        // Toggle context
-        $(document).on('click', '.toggle-context', function() {
-            const icon = $(this).find('i');
-            setTimeout(() => {
-                icon.toggleClass('fa-chevron-down fa-chevron-up');
-            }, 150);
-        });
-
-        function loadLogFile(filename, page = 1) {
-            // Update URL without reload
-            const url = new URL(window.location);
-            url.searchParams.set('file', filename);
-            url.searchParams.set('page', page);
-            window.history.replaceState({}, '', url);
-
-            // Update UI
-            $('.log-file-item').removeClass('bg-primary text-white').addClass('hover-bg-light');
-            $(`.log-file-item[data-filename="${filename}"]`).addClass('bg-primary text-white').removeClass('hover-bg-light');
-
-            // Show loading
-            $('#logContent').html(`
-                <div class="text-center text-muted py-5">
-                    <i class="fas fa-spinner fa-spin fa-3x mb-3"></i>
-                    <div>Loading log content...</div>
-                </div>
-            `);
-
-            // Load content
-            $.get('{{ route("admin.logs.view", ":filename") }}'.replace(':filename', filename), {
-                page: page
-            })
-            .done(function(data) {
-                currentFile = filename;
-                renderLogContent(data);
-            })
-            .fail(function() {
-                $('#logContent').html(`
-                    <div class="text-center text-danger py-5">
-                        <i class="fas fa-exclamation-triangle fa-3x mb-3"></i>
-                        <div>Error loading log file</div>
-                    </div>
-                `);
-            });
-        }
-
-        function clearLogFile(filename) {
-            $.post('{{ route("admin.logs.clear", ":filename") }}'.replace(':filename', filename))
-            .done(function(data) {
-                if (data.success) {
-                    loadLogFile(filename);
-                    showAlert('success', data.message);
-                }
-            })
-            .fail(function() {
-                showAlert('danger', 'Error clearing log file');
-            });
-        }
-
-        function renderLogContent(data) {
-            let html = '';
-            
-            if (data.content && data.content.length > 0) {
-                data.content.forEach(function(entry, index) {
-                    const levelColor = getLevelColor(entry.level);
-                    const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString('de-DE') : '';
-                    
-                    html += `
-                        <div class="log-entry mb-3 p-3 border rounded">
-                            <div class="d-flex justify-content-between align-items-start mb-2">
-                                <div class="d-flex align-items-center">
-                                    <span class="badge bg-${levelColor} me-2">${entry.level.toUpperCase()}</span>
-                                    ${timestamp ? `<small class="text-muted">${timestamp}</small>` : ''}
-                                </div>
-                                ${entry.context && entry.context.length > 0 ? `
-                                    <button class="btn btn-sm btn-outline-secondary toggle-context" data-bs-toggle="collapse" data-bs-target="#context-${index}">
-                                        <i class="fas fa-chevron-down"></i>
-                                    </button>
-                                ` : ''}
-                            </div>
-                            
-                            <div class="log-message">
-                                <pre class="mb-0 text-wrap">${escapeHtml(entry.message)}</pre>
-                            </div>
-
-                            ${entry.context && entry.context.length > 0 ? `
-                                <div class="collapse mt-2" id="context-${index}">
-                                    <div class="card card-body bg-light">
-                                        <pre class="mb-0 small text-wrap">${escapeHtml(entry.context.join('\n'))}</pre>
-                                    </div>
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                });
-
-                // Add pagination
-                if (data.total_pages > 1) {
-                    html += '<div class="d-flex justify-content-center mt-4"><nav><ul class="pagination">';
-                    
-                    if (data.current_page > 1) {
-                        html += `<li class="page-item"><a class="page-link" href="#" data-page="${data.current_page - 1}">Previous</a></li>`;
-                    }
-
-                    for (let i = Math.max(1, data.current_page - 2); i <= Math.min(data.total_pages, data.current_page + 2); i++) {
-                        html += `<li class="page-item ${i === data.current_page ? 'active' : ''}">
-                            <a class="page-link" href="#" data-page="${i}">${i}</a>
-                        </li>`;
-                    }
-
-                    if (data.current_page < data.total_pages) {
-                        html += `<li class="page-item"><a class="page-link" href="#" data-page="${data.current_page + 1}">Next</a></li>`;
-                    }
-
-                    html += '</ul></nav></div>';
-                }
-            } else {
-                html = `
-                    <div class="text-center text-muted py-5">
-                        <i class="fas fa-file-alt fa-3x mb-3"></i>
-                        <div>No log entries found</div>
-                    </div>
-                `;
-            }
-
-            $('#logContent').html(html);
-        }
-
-        function getLevelColor(level) {
-            const colors = {
-                'emergency': 'danger',
-                'alert': 'danger',
-                'critical': 'danger',
-                'error': 'danger',
-                'warning': 'warning',
-                'notice': 'info',
-                'info': 'info',
-                'debug': 'secondary'
-            };
-            return colors[level] || 'secondary';
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        function showAlert(type, message) {
-            const alert = $(`
-                <div class="alert alert-${type} alert-dismissible fade show position-fixed" style="top: 20px; right: 20px; z-index: 1050;">
-                    ${message}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-            `);
-            $('body').append(alert);
-            setTimeout(() => alert.alert('close'), 5000);
-        }
-    });
+document.addEventListener('DOMContentLoaded', () => {
+    // Beim Seitenaufruf ganz nach oben scrollen (neueste Einträge zuerst)
+    const container = document.querySelector('.card-body');
+    if (container) container.scrollTop = 0;
+});
 </script>
 @endpush
-
-@push('styles')
-<style>
-    .log-file-item {
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-    .log-file-item:hover {
-        background-color: #f8f9fa;
-    }
-    .log-entry {
-        transition: all 0.2s ease;
-    }
-    .log-entry:hover {
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .hover-bg-light:hover {
-        background-color: #f8f9fa !important;
-    }
-    pre {
-        white-space: pre-wrap;
-        word-wrap: break-word;
-    }
-</style>
-@endpush
-```
-
-</x-app-layout>
