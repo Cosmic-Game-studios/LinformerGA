@@ -1,23 +1,118 @@
-// -- 3) Inhalt sicher einlesen -----------------------------------------------
+<?php
 
-// a) Dateinamen absolut sauber machen
-$currentFile = trim(basename($currentFile));      // entfernt \ / CR/LF/Spaces
+namespace Modules\Admin\Controllers;
 
-// b) Vollständigen Pfad zusammensetzen (OS-unabhängig)
-$path = rtrim($this->logDir, '\\/') . DIRECTORY_SEPARATOR . $currentFile;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Response;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Str;
+use Carbon\Carbon;
 
-// c) Existenz- UND Dateityp-Check  ➜ ansonsten 404
-abort_unless(File::isFile($path), 404);
+/**
+ * Admin-Log-Viewer   –   liest ausschließlich aus storage/logs
+ *
+ * ▸ Anzeige mit Pagination
+ * ▸ Download einzelner Dateien
+ * ▸ Löschen aller Logs außer des heutigen
+ * ▸ Robuste Pfad- und Eingabehärtung
+ */
+class ErrorLogController
+{
+    /** Absoluter Pfad zum Log-Ordner, garantiert mit Slash am Ende */
+    private string $logDir;
 
-// d) Jetzt gefahrlos lesen und in umgekehrter Reihenfolge anzeigen
-$lines = collect(preg_split('/\r?\n/', File::get($path)))
-    ->filter()        // leere Zeilen weg
-    ->reverse()       // neueste zuerst
-    ->values()
-    ->map(function (string $line) {
-        preg_match('/\.(?<lvl>[A-Z]+):/', $line, $m);
-        return [
-            'raw'   => $line,
-            'level' => strtolower($m['lvl'] ?? 'info'),
-        ];
-    });
+    /** Dateiname der aktuell angezeigten Datei (relativ) */
+    private string $currentFile = '';
+
+    public function __construct()
+    {
+        //  storage/logs  ➜  C:\inetpub\project\storage\logs\   usw.
+        $this->logDir = rtrim(storage_path('logs'), '\\/').DIRECTORY_SEPARATOR;
+
+        // Ordner anlegen, falls er (versehentlich) fehlt
+        if (! is_dir($this->logDir)) {
+            mkdir($this->logDir, 0775, true);
+        }
+    }
+
+    // ───────────────────────────────────────────────────────── INDEX
+    public function index(Request $request)
+    {
+        /* 1) Log-Dateien einsammeln (nur daily-Files) */
+        $files = collect(File::files($this->logDir))
+            ->filter(fn ($f) => Str::is('laravel-????-??-??.log', $f->getFilename()))
+            ->sortByDesc(fn ($f) => $f->getMTime())           // neueste zuerst
+            ->values();
+
+        /* 2) Aktuelle Datei bestimmen (Query‐Param oder neueste) */
+        $this->currentFile = trim(basename($request->query('file', '')));
+        if ($this->currentFile === '' && $files->isNotEmpty()) {
+            $this->currentFile = $files->first()->getFilename();
+        }
+
+        /* 3) Pfad bauen & Existenz checken */
+        $path = $this->logDir.$this->currentFile;
+        abort_unless(File::isFile($path), 404);              // vermeidet Pfad‐Leak
+
+        /* 4) Inhalt lesen, drehen, level erkennen */
+        $lines = collect(preg_split('/\r?\n/', File::get($path)))
+            ->filter()
+            ->reverse()
+            ->values()
+            ->map(function (string $line) {
+                preg_match('/\.(?<lvl>[A-Z]+):/', $line, $m);
+                return [
+                    'raw'   => $line,
+                    'level' => strtolower($m['lvl'] ?? 'info'),
+                ];
+            });
+
+        /* 5) Pagination */
+        $perPage  = 100;
+        $page     = LengthAwarePaginator::resolveCurrentPage();
+        $paginated = new LengthAwarePaginator(
+            $lines->forPage($page, $perPage),
+            $lines->count(),
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+
+        return view('logviewer.index', [
+            'files'       => $files,
+            'currentFile' => $this->currentFile,
+            'logs'        => $paginated,
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────── DOWNLOAD
+    public function download(Request $request)
+    {
+        $file = trim(basename($request->query('file', '')));
+        $path = $this->logDir.$file;
+
+        abort_unless(
+            $file !== '' &&
+            Str::endsWith($file, '.log') &&
+            File::isFile($path),
+            404
+        );
+
+        return Response::download($path, $file, [
+            'Content-Type' => 'text/plain',
+        ]);
+    }
+
+    // ────────────────────────────────────────────────────────── CLEAR
+    public function clear()
+    {
+        $today = Carbon::today()->format('Y-m-d');
+
+        collect(File::files($this->logDir))
+            ->filter(fn ($f) => ! Str::contains($f->getFilename(), $today))
+            ->each(fn ($f) => File::delete($f->getRealPath()));
+
+        return back()->with('status', 'Alle älteren Log-Dateien wurden gelöscht.');
+    }
+}
