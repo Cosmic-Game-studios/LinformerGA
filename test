@@ -1,166 +1,158 @@
-{{-- ---------------------------------------------------------------------
-     Wrapper: wenn du global schon ein data-bs-theme setzt, entferne die
-     Umschalter hier. Ansonsten bleibt alles funktionsfähig.
------------------------------------------------------------------------- --}}
 <x-app-layout>
-    {{-- ---------- Offcanvas + fixe Sidebar (rechts) ---------- --}}
-    <div  class="offcanvas-lg offcanvas-end" tabindex="-1" id="logSidebar">
-        <div class="offcanvas-header border-bottom">
-            <h5 class="offcanvas-title">
-                <i class="fas fa-list-ul me-2"></i>Logs
-            </h5>
-            <button class="btn-close text-reset d-lg-none" data-bs-dismiss="offcanvas"></button>
-        </div>
-
-        <div class="offcanvas-body p-0">
-            <div class="list-group list-group-flush">
-                @forelse($files as $file)
+    {{-- Seitenleiste: Log-Dateien --}}
+    <x-app-marginal class="bg-white border-end border-light">
+        <div class="p-4">
+            <h6 class="text-muted text-uppercase fw-semibold mb-3 small">Log-Dateien</h6>
+            <div class="d-flex flex-column gap-1">
+                @foreach($files as $file)
                     @php $active = $currentFile === $file->getFilename(); @endphp
-                    <a  href="{{ route('admin.errorlog.index', ['file' => $file->getFilename()]) }}"
-                        class="list-group-item list-group-item-action d-flex justify-content-between align-items-center
-                               {{ $active ? 'active' : '' }}">
-                        <span class="text-truncate" style="max-width: 180px">
-                            <i class="fas fa-file-alt me-2 opacity-75"></i>{{ $file->getFilename() }}
-                        </span>
+                    <a href="{{ route('admin.errorlog.index', ['file' => $file->getFilename()]) }}"
+                       class="d-flex justify-content-between align-items-center p-3 rounded-2 text-decoration-none
+                              {{ $active ? 'bg-primary text-white shadow-sm' : 'text-dark hover-bg-light' }}
+                              transition-all">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-file-alt me-3 {{ $active ? 'text-white' : 'text-muted' }}"></i>
+                            <span class="fw-medium">{{ $file->getFilename() }}</span>
+                        </div>
                         <small class="opacity-75">{{ number_format($file->getSize()/1024,1) }} KB</small>
                     </a>
-                @empty
-                    <div class="list-group-item text-center text-muted small">
-                        Keine Log-Dateien
+                @endforeach
+            </div>
+        </div>
+    </x-app-marginal>
+
+```
+{{-- Hauptbereich --}}
+<x-app-content>
+    <div class="container-fluid px-4 py-4">
+        <div class="row">
+            <div class="col-12">
+                {{-- Header --}}
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h4 class="mb-1 fw-semibold">Error Logs</h4>
+                        <p class="text-muted mb-0">{{ $currentFile }}</p>
                     </div>
-                @endforelse
+                    
+                    <div class="d-flex gap-2">
+                        {{-- Download --}}
+                        <a href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
+                           class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-2">
+                            <i class="fas fa-download"></i>
+                            <span>Download</span>
+                        </a>
+
+                        {{-- Clear --}}
+                        <form action="{{ route('admin.errorlog.clear') }}" method="POST"
+                              onsubmit="return confirm('Sind Sie sicher, dass Sie alle älteren Log-Dateien löschen möchten?');">
+                            @csrf @method('DELETE')
+                            <button type="submit" class="btn btn-outline-danger btn-sm d-flex align-items-center gap-2">
+                                <i class="fas fa-trash-alt"></i>
+                                <span>Löschen</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                {{-- Log Content --}}
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body p-0">
+                        <div class="bg-dark rounded-3 position-relative" style="max-height:70vh; overflow:auto">
+                            <pre class="m-0 p-4 text-light font-monospace small lh-sm">@foreach($logs as $entry)<span class="
+```
+
+@switch($entry[‘level’])
+@case(‘error’)   text-danger fw-bold @break
+@case(‘warning’) text-warning fw-bold @break
+@case(‘critical’) text-danger fw-bold bg-danger bg-opacity-25 px-1 rounded @break
+@case(‘info’) text-info @break
+@case(‘debug’) text-secondary @break
+@default text-light
+@endswitch
+“>{{ $entry[‘raw’] }}</span>
+@endforeach</pre>
+</div>
+</div>
+
+```
+                    {{-- Pagination --}}
+                    @if($logs->hasPages())
+                    <div class="card-footer bg-light border-0 d-flex justify-content-center py-3">
+                        {{ $logs->withQueryString()->links() }}
+                    </div>
+                    @endif
+                </div>
             </div>
         </div>
     </div>
+</x-app-content>
+```
 
-    {{-- ---------- Main-Area ---------- --}}
-    <x-app-content class="overflow-auto">
-        {{-- Top-Bar --}}
-        <nav class="navbar navbar-dark bg-dark px-3 mb-3 rounded shadow-sm">
-            {{-- Sidebar-Toggle (rechts) --}}
-            <button class="btn btn-outline-light d-lg-none order-3 ms-2"
-                    data-bs-toggle="offcanvas" data-bs-target="#logSidebar">
-                <i class="fas fa-list"></i>
-            </button>
-
-            {{-- Dateiname --}}
-            <span class="navbar-brand mb-0 h6 text-truncate">
-                <i class="fas fa-bug me-2"></i>{{ $currentFile }}
-            </span>
-
-            <div class="ms-auto d-flex flex-wrap gap-2 align-items-center">
-                {{-- Theme Switch --}}
-                <button id="themeToggle" class="btn btn-outline-light btn-sm"
-                        data-bs-toggle="tooltip" data-bs-title="Light/Dark">
-                    <i class="fas fa-moon"></i>
-                </button>
-
-                {{-- Level Filter --}}
-                <select id="levelFilter" class="form-select form-select-sm w-auto"
-                        data-bs-toggle="tooltip" data-bs-title="Log-Level filtern">
-                    <option value="">Alle Level</option>
-                    <option value="error">ERROR</option>
-                    <option value="warning">WARNING</option>
-                    <option value="info">INFO</option>
-                </select>
-
-                {{-- Download --}}
-                <a  href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
-                    class="btn btn-outline-light btn-sm"
-                    data-bs-toggle="tooltip" data-bs-title="Download">
-                    <i class="fas fa-download"></i>
-                </a>
-
-                {{-- Clear --}}
-                <form action="{{ route('admin.errorlog.clear') }}" method="POST" class="m-0"
-                      onsubmit="return confirm('Alle älteren Log-Dateien löschen?');">
-                    @csrf @method('DELETE')
-                    <button class="btn btn-outline-danger btn-sm"
-                            data-bs-toggle="tooltip" data-bs-title="Alte Logs löschen">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                </form>
-            </div>
-        </nav>
-
-        {{-- Log-Tabelle --}}
-        <div class="table-responsive border rounded shadow-sm">
-            <table class="table table-sm table-hover align-middle mb-0" id="logTable">
-                <tbody>
-                @foreach($logs as $entry)
-                    @php
-                        $rowClass = match($entry['level']) {
-                            'error','critical' => 'table-danger',
-                            'warning'         => 'table-warning',
-                            default           => 'table-info'
-                        };
-                    @endphp
-                    <tr class="{{ $rowClass }} log-row" data-level="{{ $entry['level'] }}">
-                        <td style="width: 110px" class="text-uppercase small fw-semibold">
-                            {{ $entry['level'] }}
-                        </td>
-                        <td class="font-monospace small text-wrap">
-                            {{ $entry['raw'] }}
-                        </td>
-                        <td style="width:1%">
-                            <button class="btn btn-outline-light btn-sm copy-btn"
-                                    data-bs-toggle="tooltip" data-bs-title="Kopieren">
-                                <i class="fas fa-copy"></i>
-                            </button>
-                        </td>
-                    </tr>
-                @endforeach
-                </tbody>
-            </table>
-        </div>
-
-        {{-- Pagination --}}
-        <div class="d-flex justify-content-center mt-3">
-            {{ $logs->withQueryString()->links() }}
-        </div>
-    </x-app-content>
 </x-app-layout>
 
-@push('scripts')
+@push(‘styles’)
+
+<style>
+.hover-bg-light:hover {
+    background-color: #f8f9fa !important;
+}
+
+.transition-all {
+    transition: all 0.2s ease-in-out;
+}
+
+.font-monospace {
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+}
+
+/* Scrollbar Styling */
+.card-body div::-webkit-scrollbar {
+    width: 8px;
+}
+
+.card-body div::-webkit-scrollbar-track {
+    background: #2d3748;
+    border-radius: 4px;
+}
+
+.card-body div::-webkit-scrollbar-thumb {
+    background: #4a5568;
+    border-radius: 4px;
+}
+
+.card-body div::-webkit-scrollbar-thumb:hover {
+    background: #718096;
+}
+
+/* Log Level Indicators */
+.text-danger {
+    color: #dc3545 !important;
+}
+
+.text-warning {
+    color: #ffc107 !important;
+}
+
+.text-info {
+    color: #0dcaf0 !important;
+}
+
+.text-secondary {
+    color: #6c757d !important;
+}
+</style>
+
+@endpush
+
+@push(‘scripts’)
+
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    /* Bootstrap-Tooltips */
-    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el =>
-        new bootstrap.Tooltip(el)
-    );
-
-    /* Live-Filter */
-    const filter  = document.getElementById('levelFilter');
-    filter.addEventListener('change', () => {
-        document.querySelectorAll('.log-row').forEach(row => {
-            row.classList.toggle('d-none', filter.value && row.dataset.level !== filter.value);
-        });
-    });
-
-    /* Copy-Button */
-    document.querySelectorAll('.copy-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const txt = btn.closest('tr').querySelector('td.font-monospace').innerText.trim();
-            navigator.clipboard.writeText(txt).then(() => {
-                btn.classList.replace('btn-outline-light', 'btn-success');
-                setTimeout(() => btn.classList.replace('btn-success','btn-outline-light'), 800);
-            });
-        });
-    });
-
-    /* Theme-Toggle */
-    const toggle = document.getElementById('themeToggle');
-    toggle.addEventListener('click', () => {
-        const html = document.documentElement;
-        const isDark = html.getAttribute('data-bs-theme') === 'dark';
-        html.setAttribute('data-bs-theme', isDark ? 'light' : 'dark');
-        toggle.querySelector('i').classList.toggle('fa-moon',  !isDark);
-        toggle.querySelector('i').classList.toggle('fa-sun',   isDark);
-    });
-
-    /* Auto-Scroll zu erstem Error */
-    const err = document.querySelector('tr[data-level="error"]');
-    if (err) err.scrollIntoView({behavior:'smooth', block:'center'});
+    const logContainer = document.querySelector('.card-body div');
+    if (logContainer) {
+        logContainer.scrollTop = 0;
+    }
 });
 </script>
+
 @endpush
