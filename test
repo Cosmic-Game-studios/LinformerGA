@@ -1,114 +1,87 @@
-<?php
+<x-app-layout>
 
-namespace App\Http\Controllers;
+    {{-- Der Seitentitel wird in den "header"-Slot des Hauptlayouts platziert --}}
+    <x-slot name="header">
+        <div class="d-flex justify-content-between align-items-center">
+            <h1 class="h2 font-semibold text-xl text-gray-800 leading-tight mb-0">
+                Laravel Error Log
+            </h1>
+            <a href="{{ route('errorlog.index') }}" class="btn btn-sm btn-outline-secondary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                </svg>
+                Aktualisieren
+            </a>
+        </div>
+    </x-slot>
 
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Str;
-use Illuminate\Support\Collection;
+    {{-- Der Hauptinhalt wird von deiner x-app-content Komponente umschlossen --}}
+    <x-app-content>
+        <div class="container-fluid py-4"> {{-- container-fluid für volle Breite innerhalb von app-content --}}
+            @if($entries->isNotEmpty())
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-dark">
+                            <tr>
+                                <th style="width: 200px;">Zeitpunkt</th>
+                                <th style="width: 150px;">Level</th>
+                                <th>Nachricht</th>
+                                <th style="width: 120px;" class="text-end">Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($entries as $e)
+                                {{-- Die Logik für die klickbare Zeile und das Ausklappen bleibt identisch --}}
+                                <tr class="log-entry-row" data-bs-toggle="collapse" data-bs-target="#collapse-{{ $loop->iteration }}" aria-expanded="false" aria-controls="collapse-{{ $loop->iteration }}">
+                                    <td class="text-nowrap font-monospace small">{{ $e['datetime'] }}</td>
+                                    <td>
+                                        <span class="badge bg-{{ $e['badge'] }} fs-6">{{ $e['level'] }}</span>
+                                    </td>
+                                    <td class="text-break">{{ $e['summary'] }}</td>
+                                    <td class="text-end">
+                                        <button class="btn btn-sm btn-outline-primary">
+                                            Anzeigen
+                                        </button>
+                                    </td>
+                                </tr>
+                                <tr class="log-details-row">
+                                    <td colspan="4" class="p-0">
+                                        <div class="collapse" id="collapse-{{ $loop->iteration }}">
+                                            <div class="p-3 bg-light">
+                                                <pre class="mb-0 text-break">{{ $e['full'] }}</pre>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @else
+                <div class="alert alert-success text-center">
+                    <h4 class="alert-heading">Alles bestens!</h4>
+                    <p class="mb-0">Keine Log-Einträge gefunden. Das System läuft fehlerfrei.</p>
+                </div>
+            @endif
+        </div>
+    </x-app-content>
 
-class ErrorLogController extends Controller
-{
-    public function index()
-    {
-        $logDir = storage_path('logs');
+    {{-- 
+      Die x-app-marginal Komponente wird hier nicht verwendet, da kein Seiteninhalt benötigt wird.
+      Du könntest sie bei Bedarf hier neben x-app-content platzieren.
+    --}}
 
-        // ▼ 1.  Alle *.log-Dateien holen – Daily-Logs heißen i. d. R. laravel-YYYY-MM-DD.log
-        $files = collect(File::files($logDir))
-            ->filter(fn($f) => Str::endsWith($f->getFilename(), '.log'))
-            // Jüngste Datei zuerst (nach Änderungsdatum, nicht nur Name!)
-            ->sortByDesc(fn($f) => $f->getMTime());
+</x-app-layout>
 
-        $entries = new Collection;
-
-        // ▼ 2.  Jede Datei parsen, aber nur die letzten 1 000 Zeilen
-        foreach ($files as $file) {
-            $tail = $this->tail($file->getRealPath(), 1000);
-            $entries = $entries->merge($this->splitIntoEntries($tail));
-        }
-
-        // ▼ 3.  Einträge global nach Zeit absteigend sortieren
-        $entries = $entries->sortByDesc('datetime')->values();
-
-        return view('errorlog.index', compact('entries'));
+{{-- Das benötigte CSS wird sauber an den 'styles'-Stack im Layout gepusht --}}
+@push('styles')
+<style>
+    .log-entry-row {
+        cursor: pointer;
     }
-
-    /**
-     * Liest die letzten $lines Zeilen einer (großen) Datei.
-     */
-    protected function tail(string $file, int $lines = 1000): string
-    {
-        $fh   = fopen($file, 'rb');
-        $pos  = -1;
-        $cnt  = 0;
-        $data = '';
-
-        // rückwärts lesen bis genug Zeilen oder Dateianfang
-        while ($cnt < $lines && fseek($fh, $pos, SEEK_END) === 0) {
-            $char = fgetc($fh);
-            if ($char === "\n") {
-                $cnt++;
-            }
-            $data = $char . $data;
-            $pos--;
-            if (ftell($fh) === 0) break;          // Dateianfang erreicht
-        }
-        fclose($fh);
-        return $data;
+    .log-entry-row:hover {
+        background-color: rgba(0, 0, 0, 0.05);
     }
-
-    /**
-     * Zerlegt Roh-Text in einzelne Log-Einträge (Header + Stack-Trace).
-     */
-    protected function splitIntoEntries(string $raw): Collection
-    {
-        $lines   = preg_split('/\R/', $raw);
-        $pattern = '/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/';
-
-        $entries = collect();
-        $current = ['header' => '', 'body' => []];
-
-        foreach ($lines as $line) {
-            if (preg_match($pattern, $line)) {          // neuer Header
-                if ($current['header']) {
-                    $entries->push($this->formatEntry($current));
-                }
-                $current = ['header' => $line, 'body' => []];
-            } else {
-                $current['body'][] = $line;
-            }
-        }
-        if ($current['header']) {
-            $entries->push($this->formatEntry($current));
-        }
-
-        return $entries;
-    }
-
-    /**
-     * Extrahiert Datum, Level, Summary & Badge-Farbe aus einem Roh-Eintrag.
-     */
-    protected function formatEntry(array $raw): array
-    {
-        if (preg_match('/^\[(.*?)\]\s+([^\:]+):\s*(.*)$/', $raw['header'], $m)) {
-            $datetime = $m[1];
-            $level    = $m[2];
-            $summary  = $m[3];
-        } else {
-            $datetime = '';
-            $level    = 'INFO';
-            $summary  = $raw['header'];
-        }
-
-        $badge = Str::contains($level, 'ERROR')    ? 'danger'
-               : (Str::contains($level, 'CRITICAL')? 'danger'
-               : (Str::contains($level, 'WARNING') ? 'warning' : 'secondary'));
-
-        return [
-            'datetime' => $datetime,
-            'level'    => $level,
-            'badge'    => $badge,
-            'summary'  => $summary,
-            'full'     => trim($raw['header']."\n".implode("\n", $raw['body'])),
-        ];
-    }
-}
+</style>
+@endpush
