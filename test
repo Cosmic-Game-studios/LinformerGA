@@ -17,7 +17,7 @@
                                 {{ $file->getFilename() }}
                             </span>
                             <small class="badge bg-body-secondary text-body rounded-pill">
-                                {{ number_format($file->getSize() / 1024, 1) }} KB
+                                {{ number_format($file->getSize()/1024,1) }} KB
                             </small>
                         </a>
                     @endforeach
@@ -29,12 +29,28 @@
     {{-- Hauptbereich --}}
     <x-app-content>
         <div class="card border-0 shadow-sm my-4" style="border-radius:1.2rem">
-            {{-- Header mit Aktionen --}}
-            <div class="card-header bg-body-tertiary border-0 d-flex justify-content-between align-items-center px-4 py-3"
+            {{-- Header mit Per-Page & Aktionen --}}
+            <div class="card-header bg-body-tertiary border-0 d-flex flex-wrap gap-3
+                        justify-content-between align-items-center px-4 py-3"
                  style="border-radius:1.2rem 1.2rem 0 0">
-                <span class="fw-semibold h5 mb-0 text-body-emphasis">
-                    <i class="fas fa-bug me-2 text-danger"></i>{{ $currentFile }}
-                </span>
+                <div class="d-flex align-items-center gap-4">
+                    <span class="fw-semibold h5 mb-0 text-body-emphasis">
+                        <i class="fas fa-bug me-2 text-danger"></i>{{ $currentFile }}
+                    </span>
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="perPageSelect" class="small mb-0 text-body-secondary">Zeilen/Seite:</label>
+                        <select id="perPageSelect"
+                                class="form-select form-select-sm"
+                                data-bs-toggle="tooltip"
+                                data-bs-title="Einträge pro Seite">
+                            @foreach($perPageOptions as $opt)
+                                <option value="{{ $opt }}" {{ $perPage == $opt ? 'selected' : '' }}>
+                                    {{ $opt }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+                </div>
                 <div class="btn-group">
                     <a href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
                        class="btn btn-sm btn-body-secondary border-0 shadow-sm"
@@ -55,7 +71,7 @@
 
             {{-- Log-Tabelle --}}
             <div class="card-body bg-body p-0" style="max-height:68vh; overflow:auto">
-                <div class="table-responsive px-0">
+                <div class="table-responsive">
                     <table class="table table-sm table-hover align-middle mb-0"
                            style="font-family:'Fira Code','Consolas',monospace;font-size:.98rem">
                         <thead>
@@ -85,7 +101,9 @@
                                     </span>
                                 </td>
                                 <td class="small text-nowrap text-body-secondary">{{ $time }}</td>
-                                <td class="font-monospace text-wrap" style="white-space:pre-line;">{{ $message }}</td>
+                                <td class="font-monospace text-wrap" style="white-space:pre-line;">
+                                    {{ $message }}
+                                </td>
                             </tr>
                         @endforeach
                         </tbody>
@@ -93,7 +111,7 @@
                 </div>
             </div>
 
-            {{-- Angepasste Pagination --}}
+            {{-- Pagination --}}
             <div class="card-footer bg-body border-0 d-flex justify-content-center py-3"
                  style="border-radius:0 0 1.2rem 1.2rem">
                 @if($logs->hasPages())
@@ -101,7 +119,9 @@
                     <ul class="pagination justify-content-center my-0 small">
                         {{-- Zurück --}}
                         <li class="page-item {{ $logs->onFirstPage() ? 'disabled' : '' }}">
-                            <a class="page-link px-2" href="{{ $logs->previousPageUrl() }}" rel="prev" aria-label="Zurück">
+                            <a class="page-link px-2"
+                               href="{{ $logs->previousPageUrl() }}&per_page={{ $perPage }}"
+                               rel="prev" aria-label="Zurück">
                                 <span aria-hidden="true" style="font-size:.8em;">&#8592;</span>
                                 <span class="d-none d-md-inline ms-1">Zurück</span>
                             </a>
@@ -116,7 +136,8 @@
 
                         @for($page = $start; $page <= $end; $page++)
                             <li class="page-item {{ $page == $current ? 'active' : '' }}">
-                                <a class="page-link px-2 rounded-circle" href="{{ $logs->url($page) }}">
+                                <a class="page-link px-2 rounded-circle"
+                                   href="{{ url()->current() }}?file={{ urlencode($currentFile) }}&page={{ $page }}&per_page={{ $perPage }}">
                                     {{ $page }}
                                 </a>
                             </li>
@@ -124,7 +145,9 @@
 
                         {{-- Weiter --}}
                         <li class="page-item {{ $logs->hasMorePages() ? '' : 'disabled' }}">
-                            <a class="page-link px-2" href="{{ $logs->nextPageUrl() }}" rel="next" aria-label="Weiter">
+                            <a class="page-link px-2"
+                               href="{{ $logs->nextPageUrl() }}&per_page={{ $perPage }}"
+                               rel="next" aria-label="Weiter">
                                 <span class="d-none d-md-inline me-1">Weiter</span>
                                 <span aria-hidden="true" style="font-size:.8em;">&#8594;</span>
                             </a>
@@ -140,9 +163,20 @@
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    // Tooltips aktivieren
     document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el =>
         new bootstrap.Tooltip(el)
     );
+
+    // Einträge-pro-Seite umschalten
+    document.getElementById('perPageSelect').addEventListener('change', e => {
+        const params = new URLSearchParams(window.location.search);
+        params.set('per_page', e.target.value);
+        params.delete('page');
+        window.location.search = params.toString();
+    });
+
+    // Auto-Scroll nach oben
     const box = document.querySelector('.card-body');
     if (box) box.scrollTop = 0;
 });
