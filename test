@@ -51,7 +51,7 @@
 @case('critical') text-danger fw-bold bg-danger bg-opacity-25 px-1 rounded @break
 @default text-body
 @endswitch
-">{{ $entry[‘raw’] }}</span>
+">{{ $entry->raw }}</span>
 @endforeach
 </pre>
 </div>
