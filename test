@@ -4,134 +4,254 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Route;
 use Carbon\Carbon;
 
-class ErrorLogViewController extends Controller
+class ErrorLogController extends Controller
 {
-    public function index(Request $request, $filename = null)
+    /**
+     * Register the routes for this controller
+     */
+    public static function routes()
     {
-        $logPath = storage_path('logs');
-        
-        // Alle .log-Dateien aus dem logs-Verzeichnis abrufen
-        $logFiles = collect(File::files($logPath))
-            ->filter(function ($file) {
-                return $file->getExtension() === 'log';
-            })
-            ->map(function ($file) {
-                return [
-                    'name' => $file->getFilename(),
-                    'path' => $file->getPathname(),
-                    'size' => $file->getSize(),
-                    'modified' => Carbon::createFromTimestamp($file->getMTime()),
-                    'basename' => pathinfo($file->getFilename(), PATHINFO_FILENAME)
-                ];
-            })
-            ->sortByDesc('modified')
-            ->values();
+        Route::middleware(['auth', 'can:admin'])->group(function () {
+            Route::get('/admin/logs', [self::class, 'index'])->name('admin.logs');
+            Route::get('/admin/logs/view/{filename}', [self::class, 'view'])->name('admin.logs.view');
+            Route::post('/admin/logs/clear/{filename}', [self::class, 'clear'])->name('admin.logs.clear');
+        });
+    }
 
-        // Wenn keine Log-Dateien vorhanden sind
-        if ($logFiles->isEmpty()) {
-            return view('error-log-viewer', [
-                'logFiles' => collect(),
-                'selectedFile' => null,
-                'logContent' => null,
-                'error' => 'Keine Log-Dateien gefunden.'
-            ]);
-        }
-
-        // Dateiauswahl: Entweder die angegebene Datei oder die neueste
-        $selectedFile = null;
-        if ($filename) {
-            $selectedFile = $logFiles->firstWhere('name', $filename);
-            if (!$selectedFile) {
-                return view('error-log-viewer', [
-                    'logFiles' => $logFiles,
-                    'selectedFile' => null,
-                    'logContent' => null,
-                    'error' => "Log-Datei '{$filename}' nicht gefunden."
-                ]);
-            }
-        } else {
-            $selectedFile = $logFiles->first();
-        }
-
-        // Log-Inhalt laden
+    /**
+     * Display the log files overview
+     */
+    public function index(Request $request)
+    {
+        $logFiles = $this->getLogFiles();
+        $selectedFile = $request->get('file');
         $logContent = null;
-        $error = null;
-        
-        try {
-            if (File::exists($selectedFile['path'])) {
-                $rawContent = File::get($selectedFile['path']);
-                
-                // Log-Einträge parsen und strukturieren
-                $logContent = $this->parseLogContent($rawContent);
-            } else {
-                $error = 'Log-Datei konnte nicht gelesen werden.';
-            }
-        } catch (\Exception $e) {
-            $error = 'Fehler beim Lesen der Log-Datei: ' . $e->getMessage();
+        $currentPage = 1;
+        $totalPages = 1;
+
+        if ($selectedFile && $this->isValidLogFile($selectedFile)) {
+            $logData = $this->getLogContent($selectedFile, $request->get('page', 1));
+            $logContent = $logData['content'];
+            $currentPage = $logData['current_page'];
+            $totalPages = $logData['total_pages'];
         }
 
-        return view('error-log-viewer', [
-            'logFiles' => $logFiles,
-            'selectedFile' => $selectedFile,
-            'logContent' => $logContent,
-            'error' => $error
+        return view('admin.logs.index', compact(
+            'logFiles',
+            'selectedFile',
+            'logContent',
+            'currentPage',
+            'totalPages'
+        ));
+    }
+
+    /**
+     * View specific log file content
+     */
+    public function view(Request $request, $filename)
+    {
+        if (!$this->isValidLogFile($filename)) {
+            abort(404);
+        }
+
+        $logData = $this->getLogContent($filename, $request->get('page', 1));
+        
+        return response()->json([
+            'content' => $logData['content'],
+            'current_page' => $logData['current_page'],
+            'total_pages' => $logData['total_pages'],
+            'filename' => $filename
         ]);
     }
 
-    private function parseLogContent($content)
+    /**
+     * Clear specific log file
+     */
+    public function clear($filename)
     {
-        // Laravel Log-Format parsen
-        $pattern = '/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (\w+)\.(\w+): (.+)$/m';
+        if (!$this->isValidLogFile($filename)) {
+            abort(404);
+        }
+
+        $filePath = storage_path("logs/{$filename}");
+        File::put($filePath, '');
+
+        return response()->json(['success' => true, 'message' => 'Log file cleared successfully']);
+    }
+
+    /**
+     * Get all log files sorted by date descending
+     */
+    private function getLogFiles(): array
+    {
+        $logPath = storage_path('logs');
         
+        if (!File::exists($logPath)) {
+            return [];
+        }
+
+        $files = File::files($logPath);
+        $logFiles = [];
+
+        foreach ($files as $file) {
+            $filename = $file->getFilename();
+            
+            // Only include .log files
+            if (pathinfo($filename, PATHINFO_EXTENSION) !== 'log') {
+                continue;
+            }
+
+            $logFiles[] = [
+                'filename' => $filename,
+                'path' => $file->getPathname(),
+                'size' => $this->formatBytes($file->getSize()),
+                'modified' => Carbon::createFromTimestamp($file->getMTime()),
+                'date' => $this->extractDateFromFilename($filename)
+            ];
+        }
+
+        // Sort by date descending (newest first)
+        usort($logFiles, function ($a, $b) {
+            return $b['modified']->timestamp - $a['modified']->timestamp;
+        });
+
+        return $logFiles;
+    }
+
+    /**
+     * Get log content with pagination
+     */
+    private function getLogContent(string $filename, int $page = 1): array
+    {
+        $filePath = storage_path("logs/{$filename}");
+        
+        if (!File::exists($filePath)) {
+            return ['content' => [], 'current_page' => 1, 'total_pages' => 1];
+        }
+
+        $content = File::get($filePath);
         $lines = explode("\n", $content);
+        $lines = array_filter($lines, fn($line) => trim($line) !== '');
+
+        // Pagination settings
+        $perPage = 100;
+        $totalLines = count($lines);
+        $totalPages = max(1, ceil($totalLines / $perPage));
+        $currentPage = max(1, min($page, $totalPages));
+        $offset = ($currentPage - 1) * $perPage;
+
+        // Get lines for current page
+        $pageLines = array_slice($lines, $offset, $perPage);
+        
+        // Parse log entries
+        $logEntries = $this->parseLogEntries($pageLines);
+
+        return [
+            'content' => $logEntries,
+            'current_page' => $currentPage,
+            'total_pages' => $totalPages,
+            'total_lines' => $totalLines
+        ];
+    }
+
+    /**
+     * Parse log entries from lines
+     */
+    private function parseLogEntries(array $lines): array
+    {
         $entries = [];
         $currentEntry = null;
-        
+
         foreach ($lines as $line) {
-            if (preg_match($pattern, $line, $matches)) {
-                // Neuer Log-Eintrag
+            // Check if line starts with timestamp pattern [YYYY-MM-DD HH:MM:SS]
+            if (preg_match('/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/', $line)) {
+                // Save previous entry if exists
                 if ($currentEntry) {
                     $entries[] = $currentEntry;
                 }
                 
+                // Start new entry
                 $currentEntry = [
-                    'timestamp' => $matches[1],
-                    'environment' => $matches[2],
-                    'level' => $matches[3],
-                    'message' => $matches[4],
-                    'context' => '',
-                    'level_class' => $this->getLevelClass($matches[3])
+                    'timestamp' => $this->extractTimestamp($line),
+                    'level' => $this->extractLevel($line),
+                    'message' => $line,
+                    'context' => []
                 ];
-            } elseif ($currentEntry && !empty(trim($line))) {
-                // Kontext-Zeile zu aktuellem Eintrag hinzufügen
-                $currentEntry['context'] .= $line . "\n";
+            } else if ($currentEntry) {
+                // Add to current entry's context
+                $currentEntry['context'][] = $line;
             }
         }
-        
-        // Letzten Eintrag hinzufügen
+
+        // Add last entry
         if ($currentEntry) {
             $entries[] = $currentEntry;
         }
-        
-        return array_reverse($entries); // Neueste zuerst
+
+        return array_reverse($entries); // Show newest first
     }
 
-    private function getLevelClass($level)
+    /**
+     * Extract timestamp from log line
+     */
+    private function extractTimestamp(string $line): ?Carbon
     {
-        $classes = [
-            'emergency' => 'danger',
-            'alert' => 'danger',
-            'critical' => 'danger',
-            'error' => 'danger',
-            'warning' => 'warning',
-            'notice' => 'info',
-            'info' => 'info',
-            'debug' => 'secondary'
-        ];
-        
-        return $classes[strtolower($level)] ?? 'secondary';
+        if (preg_match('/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/', $line, $matches)) {
+            return Carbon::createFromFormat('Y-m-d H:i:s', $matches[1]);
+        }
+        return null;
+    }
+
+    /**
+     * Extract log level from log line
+     */
+    private function extractLevel(string $line): string
+    {
+        if (preg_match('/\]\s+(\w+)\./', $line, $matches)) {
+            return strtolower($matches[1]);
+        }
+        return 'info';
+    }
+
+    /**
+     * Extract date from filename
+     */
+    private function extractDateFromFilename(string $filename): ?Carbon
+    {
+        if (preg_match('/(\d{4}-\d{2}-\d{2})/', $filename, $matches)) {
+            return Carbon::createFromFormat('Y-m-d', $matches[1]);
+        }
+        return null;
+    }
+
+    /**
+     * Check if filename is a valid log file
+     */
+    private function isValidLogFile(string $filename): bool
+    {
+        $filePath = storage_path("logs/{$filename}");
+        return File::exists($filePath) && 
+               pathinfo($filename, PATHINFO_EXTENSION) === 'log' &&
+               !str_contains($filename, '..') &&
+               !str_contains($filename, '/');
+    }
+
+    /**
+     * Format bytes to human readable format
+     */
+    private function formatBytes(int $bytes): string
+    {
+        if ($bytes >= 1073741824) {
+            return number_format($bytes / 1073741824, 2) . ' GB';
+        } elseif ($bytes >= 1048576) {
+            return number_format($bytes / 1048576, 2) . ' MB';
+        } elseif ($bytes >= 1024) {
+            return number_format($bytes / 1024, 2) . ' KB';
+        } else {
+            return $bytes . ' bytes';
+        }
     }
 }
