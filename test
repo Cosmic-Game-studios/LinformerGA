@@ -1,100 +1,70 @@
-<?php
+<x-app-layout>
+    {{-- Seitenleiste: Log-Dateien --}}
+    <x-app-marginal class="bg-light border-end">
+        <div class="list-group list-group-flush">
+            @foreach($files as $file)
+                @php $active = $currentFile === $file->getFilename(); @endphp
+                <a href="{{ route('admin.errorlog.index', ['file' => $file->getFilename()]) }}"
+                   class="list-group-item list-group-item-action d-flex justify-content-between
+                          align-items-center {{ $active ? 'active' : '' }}">
+                    <span><i class="fas fa-file-alt me-2"></i>{{ $file->getFilename() }}</span>
+                    <small class="opacity-75">{{ number_format($file->getSize()/1024,1) }} KB</small>
+                </a>
+            @endforeach
+        </div>
+    </x-app-marginal>
 
-namespace Modules\Admin\Controllers;
+    {{-- Hauptbereich --}}
+    <x-app-content>
+        <div class="card shadow-sm mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-bug me-2"></i>{{ $currentFile }}</span>
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Response;
-use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Str;
-use Carbon\Carbon;
+                <div class="btn-group">
+                    {{-- Download --}}
+                    <a href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-download"></i>
+                    </a>
 
-class ErrorLogController
-{
-    private string $logDir;
-    private string $currentFile = '';
+                    {{-- Clear --}}
+                    <form action="{{ route('admin.errorlog.clear') }}" method="POST"
+                          onsubmit="return confirm('Alle älteren Log-Dateien löschen?');">
+                        @csrf @method('DELETE')
+                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
 
-    public function __construct()
-    {
-        $this->logDir = rtrim(
-            base_path('storage' . DIRECTORY_SEPARATOR . 'logs'),
-            '\\/'
-        ) . DIRECTORY_SEPARATOR;
+            <div class="card-body p-0" style="max-height:70vh; overflow:auto">
+                <pre class="m-0 px-3 py-2">
+@foreach($logs as $entry)
+<span class="
+    @switch($entry['level'])
+        @case('error')   text-danger fw-bold @break
+        @case('warning') text-warning fw-bold @break
+        @case('critical') text-danger fw-bold bg-danger-subtle @break
+        @default text-body
+    @endswitch
+">{{ $entry['raw'] }}</span>
+@endforeach
+                </pre>
+            </div>
 
-        abort_unless(is_dir($this->logDir), 500, "Log-Verzeichnis fehlt: {$this->logDir}");
-    }
+            <div class="card-footer d-flex justify-content-center">
+                {{ $logs->withQueryString()->links() }}
+            </div>
+        </div>
+    </x-app-content>
+</x-app-layout>
 
-    /* ----------------------------- INDEX ----------------------------- */
-    public function index(Request $request)
-    {
-        $files = collect(File::glob($this->logDir . '*.log'))
-            ->map(fn ($p) => new \SplFileInfo($p))
-            ->sortByDesc(fn ($f) => $f->getMTime())
-            ->values();
-
-        $this->currentFile = trim(basename($request->query('file', '')));
-        if ($this->currentFile === '' && $files->isNotEmpty()) {
-            $this->currentFile = $files->first()->getFilename();
-        }
-
-        $path = $this->logDir . $this->currentFile;
-        abort_unless(File::isFile($path), 404);
-
-        $lines = collect(preg_split('/\r?\n/', File::get($path)))
-            ->filter()
-            ->reverse()
-            ->values()
-            ->map(function (string $line) {
-                preg_match('/\.(?<lvl>[A-Z]+):/', $line, $m);
-                return [
-                    'raw'   => $line,
-                    'level' => strtolower($m['lvl'] ?? 'info'),
-                ];
-            });
-
-        $perPage  = 100;
-        $page     = LengthAwarePaginator::resolveCurrentPage();
-        $paginated = new LengthAwarePaginator(
-            $lines->forPage($page, $perPage),
-            $lines->count(),
-            $perPage,
-            $page,
-            ['path' => $request->url(), 'query' => $request->query()]
-        );
-
-        // ⇢ hier jetzt der Modul-Namensraum admin::errorlog.index
-        return view('admin::errorlog.index', [
-            'files'       => $files,
-            'currentFile' => $this->currentFile,
-            'logs'        => $paginated,
-        ]);
-    }
-
-    /* ----------------------------- DOWNLOAD ----------------------------- */
-    public function download(Request $request)
-    {
-        $file = trim(basename($request->query('file', '')));
-        $path = $this->logDir . $file;
-
-        abort_unless(
-            $file !== '' &&
-            Str::endsWith(Str::lower($file), '.log') &&
-            File::isFile($path),
-            404
-        );
-
-        return Response::download($path, $file, ['Content-Type' => 'text/plain']);
-    }
-
-    /* ----------------------------- CLEAR ----------------------------- */
-    public function clear()
-    {
-        $today = Carbon::today()->format('Y-m-d');
-
-        collect(File::glob($this->logDir . '*.log'))
-            ->filter(fn ($p) => ! Str::contains($p, $today))
-            ->each(fn ($p) => File::delete($p));
-
-        return back()->with('status', 'Alle älteren Log-Dateien wurden gelöscht.');
-    }
-}
+@push('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const box = document.querySelector('.card-body');
+    if (box) box.scrollTop = 0;
+});
+</script>
+@endpush
