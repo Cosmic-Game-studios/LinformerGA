@@ -1,21 +1,45 @@
 <x-app-layout>
-    {{-- Rechte Sidebar --}}
+    {{-- Rechte Sidebar mit Log-Dateien --}}
     <x-app-marginal class="bg-body border-start" style="min-width:260px;max-width:320px">
-        {{-- … (Deine Datei-Liste unverändert) … --}}
+        <div class="d-flex flex-column h-100">
+            <div class="py-2 px-3 border-bottom bg-body-tertiary fw-semibold text-uppercase small sticky-top" style="z-index:2;">
+                <i class="fas fa-list-ul me-2"></i> Log-Dateien
+            </div>
+            <div class="flex-grow-1 overflow-auto">
+                <div class="list-group list-group-flush">
+                    @foreach($files as $file)
+                        @php $active = $currentFile === $file->getFilename(); @endphp
+                        <a href="{{ route('admin.errorlog.index', ['file' => $file->getFilename()]) }}"
+                           class="list-group-item list-group-item-action d-flex justify-content-between align-items-center
+                                  border-0 py-3 pe-3 ps-4 {{ $active ? 'active bg-primary text-white shadow-sm' : 'sidebar-item' }}">
+                            <span class="text-truncate" style="max-width:120px">
+                                <i class="fas fa-file-alt me-2 text-body-secondary"></i>
+                                {{ $file->getFilename() }}
+                            </span>
+                            <small class="badge bg-body-secondary text-body rounded-pill">
+                                {{ number_format($file->getSize() / 1024, 1) }} KB
+                            </small>
+                        </a>
+                    @endforeach
+                </div>
+            </div>
+        </div>
     </x-app-marginal>
 
     {{-- Hauptbereich --}}
     <x-app-content>
         <div class="card border-0 shadow-sm my-4" style="border-radius:1.2rem">
-            {{-- Header --}}
-            <div class="card-header bg-body-tertiary border-0 d-flex justify-content-between align-items-center px-4 py-3"
+            {{-- Header mit Per-Page-Dropdown & Aktionen --}}
+            <div class="card-header bg-body-tertiary border-0 d-flex flex-wrap gap-3
+                        justify-content-between align-items-center px-4 py-3"
                  style="border-radius:1.2rem 1.2rem 0 0">
-                <div class="d-flex align-items-center gap-4">
-                    <span class="fw-semibold h5 mb-0 text-body-emphasis">
-                        <i class="fas fa-bug me-2 text-danger"></i>{{ $currentFile }}
-                    </span>
+                {{-- Dateiname --}}
+                <span class="fw-semibold h5 mb-0 text-body-emphasis">
+                    <i class="fas fa-bug me-2 text-danger"></i>{{ $currentFile }}
+                </span>
 
-                    {{-- Dropdown: Zeilen/Seite --}}
+                <div class="d-flex align-items-center gap-3">
+                    {{-- Zeilen pro Seite --}}
                     <div class="d-flex align-items-center gap-2">
                         <label for="perPageSelect" class="small mb-0 text-body-secondary">Zeilen/Seite:</label>
                         <select id="perPageSelect"
@@ -29,73 +53,112 @@
                             @endforeach
                         </select>
                     </div>
-                </div>
-                {{-- Aktionen: Download & Clear --}}
-                <div class="btn-group">
-                    {{-- Download --}}
-                    <a href="{{ route('admin.errorlog.download', ['file'=>$currentFile]) }}"
-                       class="btn btn-sm btn-body-secondary border-0 shadow-sm"
-                       data-bs-toggle="tooltip" data-bs-title="Download">
-                        <i class="fas fa-download"></i>
-                    </a>
-                    {{-- Clear --}}
-                    <form action="{{ route('admin.errorlog.clear') }}" method="POST" class="m-0"
-                          onsubmit="return confirm('Alte Logs löschen?');">
-                        @csrf @method('DELETE')
-                        <button class="btn btn-sm btn-body-secondary border-0 shadow-sm text-danger"
-                                data-bs-toggle="tooltip" data-bs-title="Alte Logs löschen">
-                            <i class="fas fa-trash-alt"></i>
-                        </button>
-                    </form>
+
+                    {{-- Download & Clear --}}
+                    <div class="btn-group">
+                        <a href="{{ route('admin.errorlog.download', ['file' => $currentFile, 'per_page' => $perPage]) }}"
+                           class="btn btn-sm btn-body-secondary border-0 shadow-sm"
+                           data-bs-toggle="tooltip" data-bs-title="Download">
+                            <i class="fas fa-download"></i>
+                        </a>
+                        <form action="{{ route('admin.errorlog.clear') }}" method="POST" class="m-0"
+                              onsubmit="return confirm('Alle älteren Log-Dateien löschen?');">
+                            @csrf @method('DELETE')
+                            <button type="submit"
+                                    class="btn btn-sm btn-body-secondary border-0 shadow-sm text-danger"
+                                    data-bs-toggle="tooltip" data-bs-title="Alte Logs löschen">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </form>
+                    </div>
                 </div>
             </div>
 
             {{-- Log-Tabelle --}}
             <div class="card-body bg-body p-0" style="max-height:68vh; overflow:auto">
-                {{-- … (Dein Table-Markup unverändert) … --}}
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0"
+                           style="font-family:'Fira Code','Consolas',monospace;font-size:.98rem">
+                        <thead>
+                            <tr class="small text-body-secondary">
+                                <th style="width:90px">Level</th>
+                                <th style="width:140px">Zeit</th>
+                                <th>Nachricht</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach($logs as $entry)
+                            @php
+                                $lvl = $entry['level'];
+                                $badgeColor = in_array($lvl, ['error','critical'])
+                                    ? 'bg-danger text-white'
+                                    : ($lvl==='warning'
+                                        ? 'bg-warning text-dark'
+                                        : 'bg-info text-dark');
+                                preg_match('/\[(.*?)\]/', $entry['raw'], $m);
+                                $time = $m[1] ?? '';
+                                $message = trim(preg_replace('/^\[[^\]]+\]\s+\w+\.([A-Z]+):\s*/','',$entry['raw']));
+                            @endphp
+                            <tr>
+                                <td>
+                                    <span class="badge rounded-pill px-2 py-1 small {{ $badgeColor }}">
+                                        {{ strtoupper($lvl) }}
+                                    </span>
+                                </td>
+                                <td class="small text-nowrap text-body-secondary">{{ $time }}</td>
+                                <td class="font-monospace text-wrap" style="white-space:pre-line;">
+                                    {{ $message }}
+                                </td>
+                            </tr>
+                        @endforeach
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {{-- Pagination --}}
             <div class="card-footer bg-body border-0 d-flex justify-content-center py-3"
                  style="border-radius:0 0 1.2rem 1.2rem">
                 @if($logs->hasPages())
-                    <nav>
-                        <ul class="pagination justify-content-center my-0 small">
-                            {{-- Zurück --}}
-                            <li class="page-item {{ $logs->onFirstPage() ? 'disabled' : '' }}">
-                                <a class="page-link px-2"
-                                   href="{{ $logs->previousPageUrl() }}&per_page={{ $perPage }}"
-                                   rel="prev" aria-label="Zurück">
-                                    <span aria-hidden="true" style="font-size:.8em;">&#8592;</span>
-                                    <span class="d-none d-md-inline ms-1">Zurück</span>
+                <nav>
+                    <ul class="pagination justify-content-center my-0 small">
+                        {{-- Zurück --}}
+                        <li class="page-item {{ $logs->onFirstPage() ? 'disabled' : '' }}">
+                            <a class="page-link px-2"
+                               href="{{ $logs->previousPageUrl() }}&per_page={{ $perPage }}"
+                               rel="prev" aria-label="Zurück">
+                                <span aria-hidden="true" style="font-size:.8em;">&#8592;</span>
+                                <span class="d-none d-md-inline ms-1">Zurück</span>
+                            </a>
+                        </li>
+
+                        @php
+                            $cur = $logs->currentPage();
+                            $last = $logs->lastPage();
+                            $start = max(1, $cur - 1);
+                            $end   = min($last,  $cur + 1);
+                        @endphp
+
+                        @for($p = $start; $p <= $end; $p++)
+                            <li class="page-item {{ $p == $cur ? 'active' : '' }}">
+                                <a class="page-link px-2 rounded-circle"
+                                   href="{{ url()->current() }}?file={{ urlencode($currentFile) }}&page={{ $p }}&per_page={{ $perPage }}">
+                                    {{ $p }}
                                 </a>
                             </li>
-                            {{-- Seitenlinks (aktuelle ±1) --}}
-                            @php
-                                $cur = $logs->currentPage();
-                                $last = $logs->lastPage();
-                                $start = max(1, $cur - 1);
-                                $end   = min($last, $cur + 1);
-                            @endphp
-                            @for($p=$start; $p<=$end; $p++)
-                                <li class="page-item {{ $p==$cur?'active':'' }}">
-                                    <a class="page-link px-2 rounded-circle"
-                                       href="{{ url()->current() }}?file={{ urlencode($currentFile) }}&page={{ $p }}&per_page={{ $perPage }}">
-                                        {{ $p }}
-                                    </a>
-                                </li>
-                            @endfor
-                            {{-- Weiter --}}
-                            <li class="page-item {{ $logs->hasMorePages()?'':'disabled' }}">
-                                <a class="page-link px-2"
-                                   href="{{ $logs->nextPageUrl() }}&per_page={{ $perPage }}"
-                                   rel="next" aria-label="Weiter">
-                                    <span class="d-none d-md-inline me-1">Weiter</span>
-                                    <span aria-hidden="true" style="font-size:.8em;">&#8594;</span>
-                                </a>
-                            </li>
-                        </ul>
-                    </nav>
+                        @endfor
+
+                        {{-- Weiter --}}
+                        <li class="page-item {{ $logs->hasMorePages() ? '' : 'disabled' }}">
+                            <a class="page-link px-2"
+                               href="{{ $logs->nextPageUrl() }}&per_page={{ $perPage }}"
+                               rel="next" aria-label="Weiter">
+                                <span class="d-none d-md-inline me-1">Weiter</span>
+                                <span aria-hidden="true" style="font-size:.8em;">&#8594;</span>
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
                 @endif
             </div>
         </div>
@@ -105,17 +168,19 @@
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    // Tooltips
+    // Bootstrap-Tooltips
     document.querySelectorAll('[data-bs-toggle="tooltip"]')
         .forEach(el => new bootstrap.Tooltip(el));
-    // per-page-Select
+
+    // Zeilen/Seite umschalten
     document.getElementById('perPageSelect').addEventListener('change', e => {
         const params = new URLSearchParams(window.location.search);
         params.set('per_page', e.target.value);
         params.delete('page');
         window.location.search = params.toString();
     });
-    // Scroll to top
+
+    // Auto-Scroll ganz nach oben
     const box = document.querySelector('.card-body');
     if (box) box.scrollTop = 0;
 });
@@ -123,5 +188,45 @@ document.addEventListener('DOMContentLoaded', () => {
 @endpush
 
 <style>
-/* … (Deine bisherigen Utility-Styles) … */
+.sidebar-item {
+    background: var(--bs-body-bg)!important;
+    color: var(--bs-body-color)!important;
+    transition: .2s;
+}
+.sidebar-item:hover, .sidebar-item:focus {
+    background: var(--bs-tertiary-bg)!important;
+    color: var(--bs-body-color)!important;
+    text-decoration: none;
+}
+.list-group-item.active {
+    background-color: #0d6efd!important;
+    border-color: #0d6efd!important;
+    color: #fff!important;
+}
+.card, .pagination .page-item.active .page-link {
+    background: var(--bs-body-bg)!important;
+}
+.card-header, .card-footer {
+    background: var(--bs-body-tertiary)!important;
+}
+.btn-body-secondary {
+    background: var(--bs-secondary-bg)!important;
+    color: var(--bs-body-color)!important;
+    border: none!important;
+}
+.btn-body-secondary:hover {
+    background: var(--bs-tertiary-bg)!important;
+}
+.pagination .page-link {
+    min-width: 1.8rem;
+    min-height: 1.8rem;
+    line-height: 1.4;
+    padding: .2rem .4rem;
+    border-radius: 50%!important;
+}
+.pagination .page-item.active .page-link {
+    background: var(--bs-primary)!important;
+    color: #fff!important;
+    border-color: var(--bs-primary)!important;
+}
 </style>
