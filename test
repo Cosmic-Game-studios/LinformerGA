@@ -1,70 +1,23 @@
-<x-app-layout>
-    {{-- Seitenleiste: Dateiliste --}}
-    <x-app-marginal class="bg-light border-end">
-        <div class="list-group list-group-flush">
-            @foreach($files as $file)
-                @php $active = $currentFile === $file->getFilename(); @endphp
-                <a href="{{ route('errorlog.index', ['file' => $file->getFilename()]) }}"
-                   class="list-group-item list-group-item-action d-flex justify-content-between
-                          align-items-center {{ $active ? 'active' : '' }}">
-                    <span><i class="fas fa-file-alt me-2"></i>{{ $file->getFilename() }}</span>
-                    <small class="opacity-75">{{ number_format($file->getSize()/1024,1) }} KB</small>
-                </a>
-            @endforeach
-        </div>
-    </x-app-marginal>
+// -- 3) Inhalt sicher einlesen -----------------------------------------------
 
-    {{-- Hauptinhalt --}}
-    <x-app-content>
-        <div class="card shadow-sm mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span><i class="fas fa-bug me-2"></i>{{ $currentFile }}</span>
+// a) Dateinamen absolut sauber machen
+$currentFile = trim(basename($currentFile));      // entfernt \ / CR/LF/Spaces
 
-                <div class="btn-group">
-                    {{-- Download --}}
-                    <a href="{{ route('errorlog.download', ['file' => $currentFile]) }}"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="fas fa-download"></i>
-                    </a>
+// b) Vollständigen Pfad zusammensetzen (OS-unabhängig)
+$path = rtrim($this->logDir, '\\/') . DIRECTORY_SEPARATOR . $currentFile;
 
-                    {{-- Clear (löschen) --}}
-                    <form action="{{ route('errorlog.clear') }}" method="POST"
-                          onsubmit="return confirm('Alle älteren Log-Dateien löschen?');">
-                        @csrf @method('DELETE')
-                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                            <i class="fas fa-trash-alt"></i>
-                        </button>
-                    </form>
-                </div>
-            </div>
+// c) Existenz- UND Dateityp-Check  ➜ ansonsten 404
+abort_unless(File::isFile($path), 404);
 
-            <div class="card-body p-0" style="max-height:70vh; overflow:auto">
-                <pre class="m-0 px-3 py-2">
-@foreach($logs as $entry)
-<span class="
-    @switch($entry['level'])
-        @case('error')   text-danger fw-bold @break
-        @case('warning') text-warning fw-bold @break
-        @case('critical') text-danger fw-bold bg-danger-subtle @break
-        @default text-body
-    @endswitch
-">{{ $entry['raw'] }}</span>
-@endforeach
-                </pre>
-            </div>
-
-            <div class="card-footer d-flex justify-content-center">
-                {{ $logs->withQueryString()->links() }}
-            </div>
-        </div>
-    </x-app-content>
-</x-app-layout>
-
-@push('scripts')
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    const box = document.querySelector('.card-body');
-    if (box) box.scrollTop = 0;   // ganz nach oben (neueste Zeile)
-});
-</script>
-@endpush
+// d) Jetzt gefahrlos lesen und in umgekehrter Reihenfolge anzeigen
+$lines = collect(preg_split('/\r?\n/', File::get($path)))
+    ->filter()        // leere Zeilen weg
+    ->reverse()       // neueste zuerst
+    ->values()
+    ->map(function (string $line) {
+        preg_match('/\.(?<lvl>[A-Z]+):/', $line, $m);
+        return [
+            'raw'   => $line,
+            'level' => strtolower($m['lvl'] ?? 'info'),
+        ];
+    });
