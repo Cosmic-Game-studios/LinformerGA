@@ -1,3 +1,19 @@
+@php
+$getLevelColor = function($level) {
+$colors = [
+‘emergency’ => ‘danger’,
+‘alert’ => ‘danger’,
+‘critical’ => ‘danger’,
+‘error’ => ‘danger’,
+‘warning’ => ‘warning’,
+‘notice’ => ‘info’,
+‘info’ => ‘info’,
+‘debug’ => ‘secondary’
+];
+return $colors[$level] ?? ‘secondary’;
+};
+@endphp
+
 <x-app-layout>
     <x-slot name="header">
         <h2 class="h4 mb-0">
@@ -71,7 +87,7 @@
                             <div class="log-entry mb-3 p-3 border rounded">
                                 <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div class="d-flex align-items-center">
-                                        <span class="badge bg-{{ $this->getLevelColor($entry['level']) }} me-2">
+                                        <span class="badge bg-{{ $getLevelColor($entry['level']) }} me-2">
                                             {{ strtoupper($entry['level']) }}
                                         </span>
                                         @if($entry['timestamp'])
@@ -367,19 +383,3 @@
 ```
 
 </x-app-layout>
-
-@php
-function getLevelColor($level) {
-$colors = [
-‘emergency’ => ‘danger’,
-‘alert’ => ‘danger’,
-‘critical’ => ‘danger’,
-‘error’ => ‘danger’,
-‘warning’ => ‘warning’,
-‘notice’ => ‘info’,
-‘info’ => ‘info’,
-‘debug’ => ‘secondary’
-];
-return $colors[$level] ?? ‘secondary’;
-}
-@endphp
