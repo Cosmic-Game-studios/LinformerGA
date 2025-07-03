@@ -1,14 +1,32 @@
+{{--
+    Überarbeitetes Design für die Error-Log-Ansicht.
+    Fokus auf eine moderne, saubere und luftige Benutzeroberfläche.
+    - Autor: Gemini
+    - Datum: 03.07.2025
+--}}
 <x-app-layout>
     {{-- Seitenleiste: Log-Dateien --}}
-    <x-app-marginal class="bg-light border-end">
+    <x-app-marginal class="bg-light border-end p-3">
+        {{-- Titel für die Seitenleiste --}}
+        <h5 class="px-2 pt-1 pb-2 mb-3 border-bottom">
+            <i class="bi bi-journal-text me-2"></i>Log-Dateien
+        </h5>
+        
         <div class="list-group list-group-flush">
             @foreach($files as $file)
                 @php $active = $currentFile === $file->getFilename(); @endphp
                 <a href="{{ route('admin.errorlog.index', ['file' => $file->getFilename()]) }}"
                    class="list-group-item list-group-item-action d-flex justify-content-between
-                          align-items-center {{ $active ? 'active' : '' }}">
-                    <span><i class="fas fa-file-alt me-2"></i>{{ $file->getFilename() }}</span>
-                    <small class="opacity-75">{{ number_format($file->getSize()/1024,1) }} KB</small>
+                          align-items-center {{ $active ? 'active' : '' }}"
+                   aria-current="{{ $active ? 'true' : 'false' }}">
+                   
+                    <span class="text-truncate pe-3">
+                        <i class="bi bi-file-earmark-text me-2"></i>{{ $file->getFilename() }}
+                    </span>
+                    
+                    <span class="badge bg-light text-dark-emphasis rounded-pill">
+                        {{ number_format($file->getSize()/1024, 1) }} KB
+                    </span>
                 </a>
             @endforeach
         </div>
@@ -16,46 +34,53 @@
 
     {{-- Hauptbereich --}}
     <x-app-content>
-        <div class="card shadow-sm mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span><i class="fas fa-bug me-2"></i>{{ $currentFile }}</span>
+        {{-- Toolbar mit Titel und Aktionen --}}
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="h4 mb-0">
+                <i class="bi bi-bug-fill me-2 text-danger"></i>
+                <span class="fw-light">Log:</span> {{ $currentFile }}
+            </h2>
 
-                <div class="btn-group">
-                    {{-- Download --}}
-                    <a href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="fas fa-download"></i>
-                    </a>
+            <div class="btn-group" role="group" aria-label="Log-Aktionen">
+                {{-- Download --}}
+                <a href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
+                   class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-download me-1"></i> Download
+                </a>
 
-                    {{-- Clear --}}
-                    <form action="{{ route('admin.errorlog.clear') }}" method="POST"
-                          onsubmit="return confirm('Alle älteren Log-Dateien löschen?');">
-                        @csrf @method('DELETE')
-                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                            <i class="fas fa-trash-alt"></i>
-                        </button>
-                    </form>
-                </div>
+                {{-- Clear --}}
+                <form action="{{ route('admin.errorlog.clear') }}" method="POST"
+                      class="d-inline"
+                      onsubmit="return confirm('Möchten Sie wirklich alle älteren Log-Dateien löschen?');">
+                    @csrf
+                    @method('DELETE')
+                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-trash3 me-1"></i> Leeren
+                    </button>
+                </form>
             </div>
+        </div>
 
-            <div class="card-body p-0" style="max-height:70vh; overflow:auto">
-                <pre class="m-0 px-3 py-2">
-@foreach($logs as $entry)
-<span class="
-    @switch($entry['level'])
-        @case('error')   text-danger fw-bold @break
-        @case('warning') text-warning fw-bold @break
-        @case('critical') text-danger fw-bold bg-danger-subtle @break
-        @default text-body
-    @endswitch
-">{{ $entry['raw'] }}</span>
-@endforeach
+        {{-- Log-Panel --}}
+        <div class="card shadow-sm">
+            <div class="card-body p-0 font-monospace" style="max-height: 70vh; overflow-y: auto;">
+                <pre class="m-0 p-3">@foreach($logs as $entry)@php
+    // Logik für die Farbgebung, ausgelagert für bessere Lesbarkeit
+    $levelClass = match($entry['level']) {
+        'critical' => 'text-danger fw-bold bg-danger-subtle p-1 rounded',
+        'error'    => 'text-danger fw-bold',
+        'warning'  => 'text-warning-emphasis fw-bold',
+        default    => 'text-body-secondary',
+    };
+@endphp<span class="{{ $levelClass }}">{{ $entry['raw'] }}</span>@endforeach
                 </pre>
             </div>
 
-            <div class="card-footer d-flex justify-content-center">
+            @if ($logs->hasPages())
+            <div class="card-footer d-flex justify-content-center bg-light">
                 {{ $logs->withQueryString()->links() }}
             </div>
+            @endif
         </div>
     </x-app-content>
 </x-app-layout>
@@ -63,8 +88,15 @@
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    const box = document.querySelector('.card-body');
-    if (box) box.scrollTop = 0;
+    const logContainer = document.querySelector('.card-body.font-monospace');
+    if (logContainer) {
+        // Standardmäßig nach oben scrollen, um die ältesten Einträge der aktuellen Seite zu sehen.
+        logContainer.scrollTop = 0;
+
+        // Pro-Tipp: Wenn Sie standardmäßig die neuesten Einträge (also ganz unten)
+        // sehen möchten, ersetzen Sie die Zeile oben durch diese:
+        // logContainer.scrollTop = logContainer.scrollHeight;
+    }
 });
 </script>
 @endpush
