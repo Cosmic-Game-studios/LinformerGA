@@ -1,73 +1,85 @@
-{{-- Layout-Gerüst deines Projekts --}}
-<x-app-layout>
-    {{-- Seitenmarginal (linke Spalte) --}}
-    <x-app-marginal class="bg-light border-end">
-        <div class="list-group list-group-flush">
-            @foreach($files as $file)
-                @php $active = $currentFile === $file->getFilename(); @endphp
-                <a href="{{ route('logviewer.index', ['file' => $file->getFilename()]) }}"
-                   class="list-group-item list-group-item-action d-flex justify-content-between
-                          align-items-center {{ $active ? 'active' : '' }}">
-                    <span>
-                        <i class="fas fa-file-alt me-2"></i>
-                        {{ $file->getFilename() }}
-                    </span>
-                    <small class="opacity-75">
-                        {{ number_format($file->getSize() / 1024, 1) }} KB
-                    </small>
-                </a>
-            @endforeach
-        </div>
-    </x-app-marginal>
+<?php
 
-    {{-- Haupt-Content --}}
-    <x-app-content>
-        <div class="card shadow-sm mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span>
-                    <i class="fas fa-bug me-2"></i>
-                    {{ $currentFile }}
-                </span>
+namespace App\Http\Controllers;
 
-                {{-- Download-Button --}}
-                <a href="{{ route('logviewer.download', $currentFile) }}"
-                   class="btn btn-sm btn-outline-secondary">
-                    <i class="fas fa-download"></i> Download
-                </a>
-            </div>
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Response;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
-            <div class="card-body p-0" style="max-height:70vh; overflow:auto">
-                <pre class="m-0 px-3 py-2">
-@foreach($logs as $entry)
-<span class="
-    @switch($entry['level'])
-        @case('error')   text-danger fw-bold @break
-        @case('warning') text-warning fw-bold @break
-        @case('critical') text-danger fw-bold bg-danger-subtle @break
-        @default text-body
-    @endswitch
-">
-{{ $entry['raw'] }}
-</span>
-@endforeach
-                </pre>
-            </div>
+class LogViewerController extends Controller
+{
+    /**
+     * Zeigt eine Liste aller Log-Files und paginiert deren Inhalt.
+     *
+     * @param  Request  $request
+     * @return \Illuminate\View\View
+     */
+    public function index(Request $request)
+    {
+        // 1) Alle Log-Dateien sortiert nach Datum (neueste zuerst)
+        $logDir = storage_path('logs');
+        $files  = collect(File::files($logDir))
+            ->sortByDesc(fn ($f) => $f->getMTime());
 
-            {{-- Pagination --}}
-            <div class="card-footer d-flex justify-content-center">
-                {{ $logs->withQueryString()->links() }}
-            </div>
-        </div>
-    </x-app-content>
-</x-app-layout>
+        // 2) Aktive Datei bestimmen – Standard: die neueste
+        $currentFile = $request->string('file')
+            ->whenMissing(fn () => optional($files->first())->getFilename());
 
-{{-- 🔌  Ergänzende JS-Snippets (z.B. Auto-Scroll an Anfang) --}}
-@push('scripts')
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    // Beim Seitenaufruf ganz nach oben scrollen (neueste Einträge zuerst)
-    const container = document.querySelector('.card-body');
-    if (container) container.scrollTop = 0;
-});
-</script>
-@endpush
+        abort_unless($currentFile && File::exists("$logDir/$currentFile"), 404);
+
+        // 3) Inhalt einlesen und umgekehrt sortieren (neueste Zeile zuerst)
+        $lines = collect(explode(PHP_EOL, File::get("$logDir/$currentFile")))
+            ->filter()                 // leere Zeilen entfernen
+            ->reverse()                // neueste ganz oben
+            ->values();
+
+        // ✨ Mini-Parser: Fehlerschwere* grob erkennen für CSS-Klassen
+        $parsed = $lines->map(function (string $line) {
+            // Suche nach „.ERROR:“, „.WARNING:“ usw.
+            preg_match('/\.(?<lvl>[A-Z]+):/', $line, $m);
+            return [
+                'raw'   => $line,
+                'level' => strtolower($m['lvl'] ?? 'info'), // fallback „info“
+            ];
+        });
+
+        // 4) Pagination
+        $perPage    = 100;
+        $page       = LengthAwarePaginator::resolveCurrentPage();
+        $paginated  = new LengthAwarePaginator(
+            $parsed->forPage($page, $perPage),
+            $parsed->count(),
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+
+        return view('logviewer.index', [
+            'files'       => $files,
+            'currentFile' => $currentFile,
+            'logs'        => $paginated,
+        ]);
+    }
+
+    /**
+     * Ermöglicht den Download einer Log-Datei.
+     *
+     * @param  string  $file
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     */
+    public function download(string $file)
+    {
+        $path = storage_path("logs/$file");
+
+        abort_unless(
+            File::exists($path) && str_ends_with($file, '.log'),
+            404
+        );
+
+        return Response::download($path, $file, [
+            'Content-Type' => 'text/plain',
+        ]);
+    }
+}
