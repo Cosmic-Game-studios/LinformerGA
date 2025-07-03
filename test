@@ -1,86 +1,87 @@
-{{--
-    Überarbeitetes Design für die Error-Log-Ansicht.
-    Fokus auf eine moderne, saubere und luftige Benutzeroberfläche.
-    - Autor: Gemini
-    - Datum: 03.07.2025
---}}
 <x-app-layout>
-    {{-- Seitenleiste: Log-Dateien --}}
-    <x-app-marginal class="bg-light border-end p-3">
-        {{-- Titel für die Seitenleiste --}}
-        <h5 class="px-2 pt-1 pb-2 mb-3 border-bottom">
-            <i class="bi bi-journal-text me-2"></i>Log-Dateien
-        </h5>
-        
-        <div class="list-group list-group-flush">
-            @foreach($files as $file)
-                @php $active = $currentFile === $file->getFilename(); @endphp
-                <a href="{{ route('admin.errorlog.index', ['file' => $file->getFilename()]) }}"
-                   class="list-group-item list-group-item-action d-flex justify-content-between
-                          align-items-center {{ $active ? 'active' : '' }}"
-                   aria-current="{{ $active ? 'true' : 'false' }}">
-                   
-                    <span class="text-truncate pe-3">
-                        <i class="bi bi-file-earmark-text me-2"></i>{{ $file->getFilename() }}
-                    </span>
-                    
-                    <span class="badge bg-light text-dark-emphasis rounded-pill">
-                        {{ number_format($file->getSize()/1024, 1) }} KB
-                    </span>
+    {{-- ─────────── Sidebar ─────────── --}}
+    <x-app-marginal class="border-end bg-light">
+        <div class="list-group list-group-flush position-sticky top-0" style="max-height: 100vh; overflow-y: auto">
+            <div class="list-group-item fw-semibold text-uppercase small bg-body-tertiary">
+                <i class="fas fa-list-ul me-1"></i>
+                Logs
+            </div>
+
+            @forelse($files as $file)
+                @php $isActive = $currentFile === $file->getFilename(); @endphp
+                <a  href="{{ route('admin.errorlog.index', ['file' => $file->getFilename()]) }}"
+                    class="list-group-item list-group-item-action d-flex justify-content-between
+                           align-items-center {{ $isActive ? 'active' : '' }}">
+                        <span class="text-truncate" style="max-width: 150px">
+                            <i class="fas fa-file-alt me-2 opacity-75"></i>{{ $file->getFilename() }}
+                        </span>
+                        <small class="opacity-75">{{ number_format($file->getSize()/1024,1) }} KB</small>
                 </a>
-            @endforeach
+            @empty
+                <div class="list-group-item text-center text-muted small">
+                    Keine Log-Dateien
+                </div>
+            @endforelse
         </div>
     </x-app-marginal>
 
-    {{-- Hauptbereich --}}
+    {{-- ─────────── Hauptinhalt ─────────── --}}
     <x-app-content>
-        {{-- Toolbar mit Titel und Aktionen --}}
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="h4 mb-0">
-                <i class="bi bi-bug-fill me-2 text-danger"></i>
-                <span class="fw-light">Log:</span> {{ $currentFile }}
-            </h2>
-
-            <div class="btn-group" role="group" aria-label="Log-Aktionen">
-                {{-- Download --}}
-                <a href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
-                   class="btn btn-sm btn-outline-secondary">
-                    <i class="bi bi-download me-1"></i> Download
-                </a>
-
-                {{-- Clear --}}
-                <form action="{{ route('admin.errorlog.clear') }}" method="POST"
-                      class="d-inline"
-                      onsubmit="return confirm('Möchten Sie wirklich alle älteren Log-Dateien löschen?');">
-                    @csrf
-                    @method('DELETE')
-                    <button type="submit" class="btn btn-sm btn-outline-danger">
-                        <i class="bi bi-trash3 me-1"></i> Leeren
-                    </button>
-                </form>
-            </div>
-        </div>
-
-        {{-- Log-Panel --}}
         <div class="card shadow-sm">
-            <div class="card-body p-0 font-monospace" style="max-height: 70vh; overflow-y: auto;">
-                <pre class="m-0 p-3">@foreach($logs as $entry)@php
-    // Logik für die Farbgebung, ausgelagert für bessere Lesbarkeit
-    $levelClass = match($entry['level']) {
-        'critical' => 'text-danger fw-bold bg-danger-subtle p-1 rounded',
-        'error'    => 'text-danger fw-bold',
-        'warning'  => 'text-warning-emphasis fw-bold',
-        default    => 'text-body-secondary',
-    };
-@endphp<span class="{{ $levelClass }}">{{ $entry['raw'] }}</span>@endforeach
-                </pre>
+            {{-- Header --}}
+            <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center bg-body-tertiary">
+                <span class="fw-semibold text-truncate">
+                    <i class="fas fa-bug me-2"></i>{{ $currentFile }}
+                </span>
+
+                <div class="btn-toolbar gap-2">
+                    {{-- Download --}}
+                    <a  href="{{ route('admin.errorlog.download', ['file' => $currentFile]) }}"
+                        class="btn btn-sm btn-outline-secondary"
+                        data-bs-toggle="tooltip" data-bs-title="Download">
+                        <i class="fas fa-download"></i>
+                    </a>
+
+                    {{-- Clear --}}
+                    <form  action="{{ route('admin.errorlog.clear') }}" method="POST"
+                           onsubmit="return confirm('Alle älteren Log-Dateien löschen?');">
+                        @csrf @method('DELETE')
+                        <button class="btn btn-sm btn-outline-danger"
+                                data-bs-toggle="tooltip" data-bs-title="Alte Logs löschen">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </form>
+                </div>
             </div>
 
-            @if ($logs->hasPages())
-            <div class="card-footer d-flex justify-content-center bg-light">
+            {{-- Tabelle mit Log-Zeilen --}}
+            <div class="table-responsive" style="max-height: 70vh; overflow-y: auto">
+                <table class="table table-sm table-hover mb-0 align-middle text-wrap">
+                    <tbody>
+                    @foreach($logs as $entry)
+                        @php
+                            $badge = match($entry['level']) {
+                                'error'     => 'bg-danger',
+                                'critical'  => 'bg-danger',
+                                'warning'   => 'bg-warning text-dark',
+                                default     => 'bg-info text-dark'
+                            };
+                        @endphp
+                        <tr>
+                            <td style="width: 110px">
+                                <span class="badge {{ $badge }}">{{ strtoupper($entry['level']) }}</span>
+                            </td>
+                            <td class="font-monospace small">{{ $entry['raw'] }}</td>
+                        </tr>
+                    @endforeach
+                    </tbody>
+                </table>
+            </div>
+
+            {{-- Pagination --}}
+            <div class="card-footer bg-white d-flex justify-content-center">
                 {{ $logs->withQueryString()->links() }}
             </div>
-            @endif
         </div>
     </x-app-content>
 </x-app-layout>
@@ -88,15 +89,12 @@
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    const logContainer = document.querySelector('.card-body.font-monospace');
-    if (logContainer) {
-        // Standardmäßig nach oben scrollen, um die ältesten Einträge der aktuellen Seite zu sehen.
-        logContainer.scrollTop = 0;
+    // Bootstrap-Tooltips aktivieren
+    [...document.querySelectorAll('[data-bs-toggle="tooltip"]')].forEach(el => new bootstrap.Tooltip(el));
 
-        // Pro-Tipp: Wenn Sie standardmäßig die neuesten Einträge (also ganz unten)
-        // sehen möchten, ersetzen Sie die Zeile oben durch diese:
-        // logContainer.scrollTop = logContainer.scrollHeight;
-    }
+    // automatisch zur ersten ERROR-Zeile scrollen
+    const firstErrorRow = document.querySelector('tr td .badge.bg-danger')?.closest('tr');
+    if (firstErrorRow) firstErrorRow.scrollIntoView({behavior:'smooth', block:'center'});
 });
 </script>
 @endpush
