@@ -1,87 +1,137 @@
-<x-app-layout>
+<?php
 
-    {{-- Der Seitentitel wird in den "header"-Slot des Hauptlayouts platziert --}}
-    <x-slot name="header">
-        <div class="d-flex justify-content-between align-items-center">
-            <h1 class="h2 font-semibold text-xl text-gray-800 leading-tight mb-0">
-                Laravel Error Log
-            </h1>
-            <a href="{{ route('errorlog.index') }}" class="btn btn-sm btn-outline-secondary">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-clockwise" viewBox="0 0 16 16">
-                    <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-                </svg>
-                Aktualisieren
-            </a>
-        </div>
-    </x-slot>
+namespace App\Http\Controllers;
 
-    {{-- Der Hauptinhalt wird von deiner x-app-content Komponente umschlossen --}}
-    <x-app-content>
-        <div class="container-fluid py-4"> {{-- container-fluid für volle Breite innerhalb von app-content --}}
-            @if($entries->isNotEmpty())
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle">
-                        <thead class="table-dark">
-                            <tr>
-                                <th style="width: 200px;">Zeitpunkt</th>
-                                <th style="width: 150px;">Level</th>
-                                <th>Nachricht</th>
-                                <th style="width: 120px;" class="text-end">Details</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach($entries as $e)
-                                {{-- Die Logik für die klickbare Zeile und das Ausklappen bleibt identisch --}}
-                                <tr class="log-entry-row" data-bs-toggle="collapse" data-bs-target="#collapse-{{ $loop->iteration }}" aria-expanded="false" aria-controls="collapse-{{ $loop->iteration }}">
-                                    <td class="text-nowrap font-monospace small">{{ $e['datetime'] }}</td>
-                                    <td>
-                                        <span class="badge bg-{{ $e['badge'] }} fs-6">{{ $e['level'] }}</span>
-                                    </td>
-                                    <td class="text-break">{{ $e['summary'] }}</td>
-                                    <td class="text-end">
-                                        <button class="btn btn-sm btn-outline-primary">
-                                            Anzeigen
-                                        </button>
-                                    </td>
-                                </tr>
-                                <tr class="log-details-row">
-                                    <td colspan="4" class="p-0">
-                                        <div class="collapse" id="collapse-{{ $loop->iteration }}">
-                                            <div class="p-3 bg-light">
-                                                <pre class="mb-0 text-break">{{ $e['full'] }}</pre>
-                                            </div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-            @else
-                <div class="alert alert-success text-center">
-                    <h4 class="alert-heading">Alles bestens!</h4>
-                    <p class="mb-0">Keine Log-Einträge gefunden. Das System läuft fehlerfrei.</p>
-                </div>
-            @endif
-        </div>
-    </x-app-content>
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
+use Carbon\Carbon;
 
-    {{-- 
-      Die x-app-marginal Komponente wird hier nicht verwendet, da kein Seiteninhalt benötigt wird.
-      Du könntest sie bei Bedarf hier neben x-app-content platzieren.
-    --}}
+class ErrorLogViewController extends Controller
+{
+    public function index(Request $request, $filename = null)
+    {
+        $logPath = storage_path('logs');
+        
+        // Alle .log-Dateien aus dem logs-Verzeichnis abrufen
+        $logFiles = collect(File::files($logPath))
+            ->filter(function ($file) {
+                return $file->getExtension() === 'log';
+            })
+            ->map(function ($file) {
+                return [
+                    'name' => $file->getFilename(),
+                    'path' => $file->getPathname(),
+                    'size' => $file->getSize(),
+                    'modified' => Carbon::createFromTimestamp($file->getMTime()),
+                    'basename' => pathinfo($file->getFilename(), PATHINFO_FILENAME)
+                ];
+            })
+            ->sortByDesc('modified')
+            ->values();
 
-</x-app-layout>
+        // Wenn keine Log-Dateien vorhanden sind
+        if ($logFiles->isEmpty()) {
+            return view('error-log-viewer', [
+                'logFiles' => collect(),
+                'selectedFile' => null,
+                'logContent' => null,
+                'error' => 'Keine Log-Dateien gefunden.'
+            ]);
+        }
 
-{{-- Das benötigte CSS wird sauber an den 'styles'-Stack im Layout gepusht --}}
-@push('styles')
-<style>
-    .log-entry-row {
-        cursor: pointer;
+        // Dateiauswahl: Entweder die angegebene Datei oder die neueste
+        $selectedFile = null;
+        if ($filename) {
+            $selectedFile = $logFiles->firstWhere('name', $filename);
+            if (!$selectedFile) {
+                return view('error-log-viewer', [
+                    'logFiles' => $logFiles,
+                    'selectedFile' => null,
+                    'logContent' => null,
+                    'error' => "Log-Datei '{$filename}' nicht gefunden."
+                ]);
+            }
+        } else {
+            $selectedFile = $logFiles->first();
+        }
+
+        // Log-Inhalt laden
+        $logContent = null;
+        $error = null;
+        
+        try {
+            if (File::exists($selectedFile['path'])) {
+                $rawContent = File::get($selectedFile['path']);
+                
+                // Log-Einträge parsen und strukturieren
+                $logContent = $this->parseLogContent($rawContent);
+            } else {
+                $error = 'Log-Datei konnte nicht gelesen werden.';
+            }
+        } catch (\Exception $e) {
+            $error = 'Fehler beim Lesen der Log-Datei: ' . $e->getMessage();
+        }
+
+        return view('error-log-viewer', [
+            'logFiles' => $logFiles,
+            'selectedFile' => $selectedFile,
+            'logContent' => $logContent,
+            'error' => $error
+        ]);
     }
-    .log-entry-row:hover {
-        background-color: rgba(0, 0, 0, 0.05);
+
+    private function parseLogContent($content)
+    {
+        // Laravel Log-Format parsen
+        $pattern = '/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (\w+)\.(\w+): (.+)$/m';
+        
+        $lines = explode("\n", $content);
+        $entries = [];
+        $currentEntry = null;
+        
+        foreach ($lines as $line) {
+            if (preg_match($pattern, $line, $matches)) {
+                // Neuer Log-Eintrag
+                if ($currentEntry) {
+                    $entries[] = $currentEntry;
+                }
+                
+                $currentEntry = [
+                    'timestamp' => $matches[1],
+                    'environment' => $matches[2],
+                    'level' => $matches[3],
+                    'message' => $matches[4],
+                    'context' => '',
+                    'level_class' => $this->getLevelClass($matches[3])
+                ];
+            } elseif ($currentEntry && !empty(trim($line))) {
+                // Kontext-Zeile zu aktuellem Eintrag hinzufügen
+                $currentEntry['context'] .= $line . "\n";
+            }
+        }
+        
+        // Letzten Eintrag hinzufügen
+        if ($currentEntry) {
+            $entries[] = $currentEntry;
+        }
+        
+        return array_reverse($entries); // Neueste zuerst
     }
-</style>
-@endpush
+
+    private function getLevelClass($level)
+    {
+        $classes = [
+            'emergency' => 'danger',
+            'alert' => 'danger',
+            'critical' => 'danger',
+            'error' => 'danger',
+            'warning' => 'warning',
+            'notice' => 'info',
+            'info' => 'info',
+            'debug' => 'secondary'
+        ];
+        
+        return $classes[strtolower($level)] ?? 'secondary';
+    }
+}
