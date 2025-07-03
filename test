@@ -1,385 +1,275 @@
-@php
-$getLevelColor = function($level) {
-$colors = [
-‘emergency’ => ‘danger’,
-‘alert’ => ‘danger’,
-‘critical’ => ‘danger’,
-‘error’ => ‘danger’,
-‘warning’ => ‘warning’,
-‘notice’ => ‘info’,
-‘info’ => ‘info’,
-‘debug’ => ‘secondary’
-];
-return $colors[$level] ?? ‘secondary’;
-};
-@endphp
+<?php
 
-<x-app-layout>
-    <x-slot name="header">
-        <h2 class="h4 mb-0">
-            <i class="fas fa-file-alt me-2"></i>
-            Error Log Viewer
-        </h2>
-    </x-slot>
+namespace App\Http\Controllers;
 
-```
-<div class="row g-0 h-100">
-    <x-app-marginal>
-        <div class="h-100 border-end bg-light">
-            <div class="p-3 border-bottom bg-white">
-                <h5 class="mb-0">
-                    <i class="fas fa-list me-2"></i>
-                    Log Files
-                </h5>
-            </div>
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Route;
+use Carbon\Carbon;
+
+class ErrorLogController extends Controller
+{
+    /**
+     * Register the routes for this controller
+     */
+    public static function routes()
+    {
+        Route::middleware(['auth', 'can:admin'])->group(function () {
+            Route::get('/admin/logs', [self::class, 'index'])->name('admin.logs');
+            Route::get('/admin/logs/view/{filename}', [self::class, 'view'])->name('admin.logs.view');
+            Route::post('/admin/logs/clear/{filename}', [self::class, 'clear'])->name('admin.logs.clear');
+        });
+    }
+
+    /**
+     * Display the log files overview
+     */
+    public function index(Request $request)
+    {
+        $logFiles = $this->getLogFiles();
+        $selectedFile = $request->get('file');
+        $logContent = null;
+        $currentPage = 1;
+        $totalPages = 1;
+
+        if ($selectedFile && $this->isValidLogFile($selectedFile)) {
+            $logData = $this->getLogContent($selectedFile, $request->get('page', 1));
+            $logContent = $logData['content'];
+            $currentPage = $logData['current_page'];
+            $totalPages = $logData['total_pages'];
+        }
+
+        return view('admin.logs.index', compact(
+            'logFiles',
+            'selectedFile',
+            'logContent',
+            'currentPage',
+            'totalPages'
+        ));
+    }
+
+    /**
+     * View specific log file content
+     */
+    public function view(Request $request, $filename)
+    {
+        if (!$this->isValidLogFile($filename)) {
+            abort(404);
+        }
+
+        $logData = $this->getLogContent($filename, $request->get('page', 1));
+        
+        return response()->json([
+            'content' => $logData['content'],
+            'current_page' => $logData['current_page'],
+            'total_pages' => $logData['total_pages'],
+            'filename' => $filename
+        ]);
+    }
+
+    /**
+     * Clear specific log file
+     */
+    public function clear($filename)
+    {
+        if (!$this->isValidLogFile($filename)) {
+            abort(404);
+        }
+
+        $filePath = storage_path("logs/{$filename}");
+        File::put($filePath, '');
+
+        return response()->json(['success' => true, 'message' => 'Log file cleared successfully']);
+    }
+
+    /**
+     * Get all log files sorted by date descending
+     */
+    private function getLogFiles(): array
+    {
+        $logPath = storage_path('logs');
+        
+        if (!File::exists($logPath)) {
+            return [];
+        }
+
+        $files = File::files($logPath);
+        $logFiles = [];
+
+        foreach ($files as $file) {
+            $filename = $file->getFilename();
             
-            <div class="overflow-auto" style="height: calc(100vh - 200px);">
-                @forelse($logFiles as $file)
-                    <div class="log-file-item p-3 border-bottom cursor-pointer {{ $selectedFile === $file['filename'] ? 'bg-primary text-white' : 'hover-bg-light' }}" 
-                         data-filename="{{ $file['filename'] }}">
-                        <div class="d-flex align-items-center justify-content-between">
-                            <div class="flex-grow-1">
-                                <div class="fw-bold small">{{ $file['filename'] }}</div>
-                                <div class="text-muted small">
-                                    {{ $file['modified']->format('d.m.Y H:i') }}
-                                </div>
-                            </div>
-                            <div class="text-end">
-                                <div class="badge bg-secondary">{{ $file['size'] }}</div>
-                            </div>
-                        </div>
-                    </div>
-                @empty
-                    <div class="p-3 text-muted text-center">
-                        <i class="fas fa-folder-open fa-2x mb-2"></i>
-                        <div>No log files found</div>
-                    </div>
-                @endforelse
-            </div>
-        </div>
-    </x-app-marginal>
-
-    <x-app-content>
-        <div class="h-100 d-flex flex-column">
-            @if($selectedFile)
-                <div class="d-flex justify-content-between align-items-center p-3 border-bottom bg-white">
-                    <div>
-                        <h5 class="mb-0">{{ $selectedFile }}</h5>
-                        @if($logContent)
-                            <small class="text-muted">
-                                Page {{ $currentPage }} of {{ $totalPages }}
-                            </small>
-                        @endif
-                    </div>
-                    <div class="btn-group">
-                        <button class="btn btn-sm btn-outline-primary" id="refreshBtn">
-                            <i class="fas fa-sync-alt"></i> Refresh
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" id="clearBtn" data-filename="{{ $selectedFile }}">
-                            <i class="fas fa-trash"></i> Clear
-                        </button>
-                    </div>
-                </div>
-
-                <div class="flex-grow-1 overflow-auto p-3" id="logContent">
-                    @if($logContent)
-                        @foreach($logContent as $entry)
-                            <div class="log-entry mb-3 p-3 border rounded">
-                                <div class="d-flex justify-content-between align-items-start mb-2">
-                                    <div class="d-flex align-items-center">
-                                        <span class="badge bg-{{ $getLevelColor($entry['level']) }} me-2">
-                                            {{ strtoupper($entry['level']) }}
-                                        </span>
-                                        @if($entry['timestamp'])
-                                            <small class="text-muted">
-                                                {{ $entry['timestamp']->format('d.m.Y H:i:s') }}
-                                            </small>
-                                        @endif
-                                    </div>
-                                    <button class="btn btn-sm btn-outline-secondary toggle-context" data-bs-toggle="collapse" data-bs-target="#context-{{ $loop->index }}">
-                                        <i class="fas fa-chevron-down"></i>
-                                    </button>
-                                </div>
-                                
-                                <div class="log-message">
-                                    <pre class="mb-0 text-wrap">{{ $entry['message'] }}</pre>
-                                </div>
-
-                                @if(!empty($entry['context']))
-                                    <div class="collapse mt-2" id="context-{{ $loop->index }}">
-                                        <div class="card card-body bg-light">
-                                            <pre class="mb-0 small text-wrap">{{ implode("\n", $entry['context']) }}</pre>
-                                        </div>
-                                    </div>
-                                @endif
-                            </div>
-                        @endforeach
-
-                        @if($totalPages > 1)
-                            <div class="d-flex justify-content-center mt-4">
-                                <nav>
-                                    <ul class="pagination">
-                                        @if($currentPage > 1)
-                                            <li class="page-item">
-                                                <a class="page-link" href="#" data-page="{{ $currentPage - 1 }}">Previous</a>
-                                            </li>
-                                        @endif
-
-                                        @for($i = max(1, $currentPage - 2); $i <= min($totalPages, $currentPage + 2); $i++)
-                                            <li class="page-item {{ $i === $currentPage ? 'active' : '' }}">
-                                                <a class="page-link" href="#" data-page="{{ $i }}">{{ $i }}</a>
-                                            </li>
-                                        @endfor
-
-                                        @if($currentPage < $totalPages)
-                                            <li class="page-item">
-                                                <a class="page-link" href="#" data-page="{{ $currentPage + 1 }}">Next</a>
-                                            </li>
-                                        @endif
-                                    </ul>
-                                </nav>
-                            </div>
-                        @endif
-                    @else
-                        <div class="text-center text-muted py-5">
-                            <i class="fas fa-file-alt fa-3x mb-3"></i>
-                            <div>Loading log content...</div>
-                        </div>
-                    @endif
-                </div>
-            @else
-                <div class="d-flex align-items-center justify-content-center h-100">
-                    <div class="text-center text-muted">
-                        <i class="fas fa-mouse-pointer fa-3x mb-3"></i>
-                        <h5>Select a log file to view</h5>
-                        <p>Click on a log file from the sidebar to display its contents</p>
-                    </div>
-                </div>
-            @endif
-        </div>
-    </x-app-content>
-</div>
-
-@push('scripts')
-<script>
-    $(document).ready(function() {
-        let currentFile = '{{ $selectedFile }}';
-
-        // File selection
-        $('.log-file-item').click(function() {
-            const filename = $(this).data('filename');
-            loadLogFile(filename);
-        });
-
-        // Pagination
-        $(document).on('click', '.page-link', function(e) {
-            e.preventDefault();
-            const page = $(this).data('page');
-            if (page && currentFile) {
-                loadLogFile(currentFile, page);
+            // Only include .log files
+            if (pathinfo($filename, PATHINFO_EXTENSION) !== 'log') {
+                continue;
             }
-        });
 
-        // Refresh button
-        $('#refreshBtn').click(function() {
-            if (currentFile) {
-                loadLogFile(currentFile);
-            }
-        });
-
-        // Clear button
-        $('#clearBtn').click(function() {
-            const filename = $(this).data('filename');
-            if (confirm('Are you sure you want to clear this log file?')) {
-                clearLogFile(filename);
-            }
-        });
-
-        // Toggle context
-        $(document).on('click', '.toggle-context', function() {
-            const icon = $(this).find('i');
-            setTimeout(() => {
-                icon.toggleClass('fa-chevron-down fa-chevron-up');
-            }, 150);
-        });
-
-        function loadLogFile(filename, page = 1) {
-            // Update URL without reload
-            const url = new URL(window.location);
-            url.searchParams.set('file', filename);
-            url.searchParams.set('page', page);
-            window.history.replaceState({}, '', url);
-
-            // Update UI
-            $('.log-file-item').removeClass('bg-primary text-white').addClass('hover-bg-light');
-            $(`.log-file-item[data-filename="${filename}"]`).addClass('bg-primary text-white').removeClass('hover-bg-light');
-
-            // Show loading
-            $('#logContent').html(`
-                <div class="text-center text-muted py-5">
-                    <i class="fas fa-spinner fa-spin fa-3x mb-3"></i>
-                    <div>Loading log content...</div>
-                </div>
-            `);
-
-            // Load content
-            $.get('{{ route("admin.logs.view", ":filename") }}'.replace(':filename', filename), {
-                page: page
-            })
-            .done(function(data) {
-                currentFile = filename;
-                renderLogContent(data);
-            })
-            .fail(function() {
-                $('#logContent').html(`
-                    <div class="text-center text-danger py-5">
-                        <i class="fas fa-exclamation-triangle fa-3x mb-3"></i>
-                        <div>Error loading log file</div>
-                    </div>
-                `);
-            });
+            $logFiles[] = [
+                'filename' => $filename,
+                'path' => $file->getPathname(),
+                'size' => $this->formatBytes($file->getSize()),
+                'modified' => Carbon::createFromTimestamp($file->getMTime()),
+                'date' => $this->extractDateFromFilename($filename)
+            ];
         }
 
-        function clearLogFile(filename) {
-            $.post('{{ route("admin.logs.clear", ":filename") }}'.replace(':filename', filename))
-            .done(function(data) {
-                if (data.success) {
-                    loadLogFile(filename);
-                    showAlert('success', data.message);
+        // Sort by date descending (newest first)
+        usort($logFiles, function ($a, $b) {
+            return $b['modified']->timestamp - $a['modified']->timestamp;
+        });
+
+        return $logFiles;
+    }
+
+    /**
+     * Get log content with pagination
+     */
+    private function getLogContent(string $filename, int $page = 1): array
+    {
+        $filePath = storage_path("logs/{$filename}");
+        
+        if (!File::exists($filePath)) {
+            return ['content' => [], 'current_page' => 1, 'total_pages' => 1];
+        }
+
+        $content = File::get($filePath);
+        $lines = explode("\n", $content);
+        $lines = array_filter($lines, fn($line) => trim($line) !== '');
+
+        // Pagination settings
+        $perPage = 100;
+        $totalLines = count($lines);
+        $totalPages = max(1, ceil($totalLines / $perPage));
+        $currentPage = max(1, min($page, $totalPages));
+        $offset = ($currentPage - 1) * $perPage;
+
+        // Get lines for current page
+        $pageLines = array_slice($lines, $offset, $perPage);
+        
+        // Parse log entries
+        $logEntries = $this->parseLogEntries($pageLines);
+
+        return [
+            'content' => $logEntries,
+            'current_page' => $currentPage,
+            'total_pages' => $totalPages,
+            'total_lines' => $totalLines
+        ];
+    }
+
+    /**
+     * Parse log entries from lines
+     */
+    private function parseLogEntries(array $lines): array
+    {
+        $entries = [];
+        $currentEntry = null;
+
+        foreach ($lines as $line) {
+            // Check if line starts with timestamp pattern [YYYY-MM-DD HH:MM:SS]
+            if (preg_match('/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/', $line)) {
+                // Save previous entry if exists
+                if ($currentEntry) {
+                    $entries[] = $currentEntry;
                 }
-            })
-            .fail(function() {
-                showAlert('danger', 'Error clearing log file');
-            });
-        }
-
-        function renderLogContent(data) {
-            let html = '';
-            
-            if (data.content && data.content.length > 0) {
-                data.content.forEach(function(entry, index) {
-                    const levelColor = getLevelColor(entry.level);
-                    const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString('de-DE') : '';
-                    
-                    html += `
-                        <div class="log-entry mb-3 p-3 border rounded">
-                            <div class="d-flex justify-content-between align-items-start mb-2">
-                                <div class="d-flex align-items-center">
-                                    <span class="badge bg-${levelColor} me-2">${entry.level.toUpperCase()}</span>
-                                    ${timestamp ? `<small class="text-muted">${timestamp}</small>` : ''}
-                                </div>
-                                ${entry.context && entry.context.length > 0 ? `
-                                    <button class="btn btn-sm btn-outline-secondary toggle-context" data-bs-toggle="collapse" data-bs-target="#context-${index}">
-                                        <i class="fas fa-chevron-down"></i>
-                                    </button>
-                                ` : ''}
-                            </div>
-                            
-                            <div class="log-message">
-                                <pre class="mb-0 text-wrap">${escapeHtml(entry.message)}</pre>
-                            </div>
-
-                            ${entry.context && entry.context.length > 0 ? `
-                                <div class="collapse mt-2" id="context-${index}">
-                                    <div class="card card-body bg-light">
-                                        <pre class="mb-0 small text-wrap">${escapeHtml(entry.context.join('\n'))}</pre>
-                                    </div>
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                });
-
-                // Add pagination
-                if (data.total_pages > 1) {
-                    html += '<div class="d-flex justify-content-center mt-4"><nav><ul class="pagination">';
-                    
-                    if (data.current_page > 1) {
-                        html += `<li class="page-item"><a class="page-link" href="#" data-page="${data.current_page - 1}">Previous</a></li>`;
-                    }
-
-                    for (let i = Math.max(1, data.current_page - 2); i <= Math.min(data.total_pages, data.current_page + 2); i++) {
-                        html += `<li class="page-item ${i === data.current_page ? 'active' : ''}">
-                            <a class="page-link" href="#" data-page="${i}">${i}</a>
-                        </li>`;
-                    }
-
-                    if (data.current_page < data.total_pages) {
-                        html += `<li class="page-item"><a class="page-link" href="#" data-page="${data.current_page + 1}">Next</a></li>`;
-                    }
-
-                    html += '</ul></nav></div>';
-                }
-            } else {
-                html = `
-                    <div class="text-center text-muted py-5">
-                        <i class="fas fa-file-alt fa-3x mb-3"></i>
-                        <div>No log entries found</div>
-                    </div>
-                `;
+                
+                // Start new entry
+                $currentEntry = [
+                    'timestamp' => $this->extractTimestamp($line),
+                    'level' => $this->extractLevel($line),
+                    'message' => $line,
+                    'context' => []
+                ];
+            } else if ($currentEntry) {
+                // Add to current entry's context
+                $currentEntry['context'][] = $line;
             }
-
-            $('#logContent').html(html);
         }
 
-        function getLevelColor(level) {
-            const colors = {
-                'emergency': 'danger',
-                'alert': 'danger',
-                'critical': 'danger',
-                'error': 'danger',
-                'warning': 'warning',
-                'notice': 'info',
-                'info': 'info',
-                'debug': 'secondary'
-            };
-            return colors[level] || 'secondary';
+        // Add last entry
+        if ($currentEntry) {
+            $entries[] = $currentEntry;
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        return array_reverse($entries); // Show newest first
+    }
+
+    /**
+     * Extract timestamp from log line
+     */
+    private function extractTimestamp(string $line): ?Carbon
+    {
+        if (preg_match('/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/', $line, $matches)) {
+            return Carbon::createFromFormat('Y-m-d H:i:s', $matches[1]);
         }
+        return null;
+    }
 
-        function showAlert(type, message) {
-            const alert = $(`
-                <div class="alert alert-${type} alert-dismissible fade show position-fixed" style="top: 20px; right: 20px; z-index: 1050;">
-                    ${message}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-            `);
-            $('body').append(alert);
-            setTimeout(() => alert.alert('close'), 5000);
+    /**
+     * Extract log level from log line
+     */
+    private function extractLevel(string $line): string
+    {
+        if (preg_match('/\]\s+(\w+)\./', $line, $matches)) {
+            return strtolower($matches[1]);
         }
-    });
-</script>
-@endpush
+        return 'info';
+    }
 
-@push('styles')
-<style>
-    .log-file-item {
-        cursor: pointer;
-        transition: all 0.2s ease;
+    /**
+     * Extract date from filename
+     */
+    private function extractDateFromFilename(string $filename): ?Carbon
+    {
+        if (preg_match('/(\d{4}-\d{2}-\d{2})/', $filename, $matches)) {
+            return Carbon::createFromFormat('Y-m-d', $matches[1]);
+        }
+        return null;
     }
-    .log-file-item:hover {
-        background-color: #f8f9fa;
-    }
-    .log-entry {
-        transition: all 0.2s ease;
-    }
-    .log-entry:hover {
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .hover-bg-light:hover {
-        background-color: #f8f9fa !important;
-    }
-    pre {
-        white-space: pre-wrap;
-        word-wrap: break-word;
-    }
-</style>
-@endpush
-```
 
-</x-app-layout>
+    /**
+     * Check if filename is a valid log file
+     */
+    private function isValidLogFile(string $filename): bool
+    {
+        $filePath = storage_path("logs/{$filename}");
+        return File::exists($filePath) && 
+               pathinfo($filename, PATHINFO_EXTENSION) === 'log' &&
+               !str_contains($filename, '..') &&
+               !str_contains($filename, '/');
+    }
+
+    /**
+     * Get color class for log level
+     */
+    private function getLevelColor(string $level): string
+    {
+        $colors = [
+            'emergency' => 'danger',
+            'alert' => 'danger', 
+            'critical' => 'danger',
+            'error' => 'danger',
+            'warning' => 'warning',
+            'notice' => 'info',
+            'info' => 'info',
+            'debug' => 'secondary'
+        ];
+        return $colors[$level] ?? 'secondary';
+    }
+
+    /**
+     * Format bytes to human readable format
+     */
+    private function formatBytes(int $bytes): string
+    {
+        if ($bytes >= 1073741824) {
+            return number_format($bytes / 1073741824, 2) . ' GB';
+        } elseif ($bytes >= 1048576) {
+            return number_format($bytes / 1048576, 2) . ' MB';
+        } elseif ($bytes >= 1024) {
+            return number_format($bytes / 1024, 2) . ' KB';
+        } else {
+            return $bytes . ' bytes';
+        }
+    }
+}
