@@ -11,44 +11,35 @@ use Carbon\Carbon;
 
 class ErrorLogController
 {
-    /** Absoluter Pfad zu storage/logs/, garantiert mit abschließendem Slash */
     private string $logDir;
-
-    /** aktuell angezeigte Datei (relativer Name, z. B. laravel-2025-06-04.log) */
     private string $currentFile = '';
 
     public function __construct()
     {
-        // 1) Pfad absolut auflösen – egal, aus welchem Working-Dir PHP gestartet wurde
         $this->logDir = rtrim(
             base_path('storage' . DIRECTORY_SEPARATOR . 'logs'),
             '\\/'
         ) . DIRECTORY_SEPARATOR;
 
-        // 2) Ordner MUSS existieren – sonst sofort 500 (kein unbemerktes mkdir)
         abort_unless(is_dir($this->logDir), 500, "Log-Verzeichnis fehlt: {$this->logDir}");
     }
 
-    /* ───────────────────────────── INDEX – Anzeige der Logs ───────────────────────────── */
+    /* ----------------------------- INDEX ----------------------------- */
     public function index(Request $request)
     {
-        /* 1) Alle .log-Dateien einsammeln und nach mtime sortieren */
         $files = collect(File::glob($this->logDir . '*.log'))
             ->map(fn ($p) => new \SplFileInfo($p))
             ->sortByDesc(fn ($f) => $f->getMTime())
             ->values();
 
-        /* 2) Datei wählen: ?file=… oder Fallback (neueste Datei) */
         $this->currentFile = trim(basename($request->query('file', '')));
         if ($this->currentFile === '' && $files->isNotEmpty()) {
             $this->currentFile = $files->first()->getFilename();
         }
 
-        /* 3) Pfad bauen + sicherstellen, dass es wirklich eine existierende Datei ist */
         $path = $this->logDir . $this->currentFile;
         abort_unless(File::isFile($path), 404);
 
-        /* 4) Inhalt lesen → neueste Zeile zuerst, Level grob erkennen */
         $lines = collect(preg_split('/\r?\n/', File::get($path)))
             ->filter()
             ->reverse()
@@ -61,9 +52,8 @@ class ErrorLogController
                 ];
             });
 
-        /* 5) Pagination */
-        $perPage = 100;
-        $page    = LengthAwarePaginator::resolveCurrentPage();
+        $perPage  = 100;
+        $page     = LengthAwarePaginator::resolveCurrentPage();
         $paginated = new LengthAwarePaginator(
             $lines->forPage($page, $perPage),
             $lines->count(),
@@ -72,14 +62,15 @@ class ErrorLogController
             ['path' => $request->url(), 'query' => $request->query()]
         );
 
-        return view('logviewer.index', [
+        // ⇢ hier jetzt der Modul-Namensraum admin::errorlog.index
+        return view('admin::errorlog.index', [
             'files'       => $files,
             'currentFile' => $this->currentFile,
             'logs'        => $paginated,
         ]);
     }
 
-    /* ───────────────────────────── DOWNLOAD ───────────────────────────── */
+    /* ----------------------------- DOWNLOAD ----------------------------- */
     public function download(Request $request)
     {
         $file = trim(basename($request->query('file', '')));
@@ -95,7 +86,7 @@ class ErrorLogController
         return Response::download($path, $file, ['Content-Type' => 'text/plain']);
     }
 
-    /* ───────────────────────────── CLEAR ───────────────────────────── */
+    /* ----------------------------- CLEAR ----------------------------- */
     public function clear()
     {
         $today = Carbon::today()->format('Y-m-d');
