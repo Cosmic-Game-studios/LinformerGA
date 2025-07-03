@@ -1,54 +1,63 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace Modules\Admin\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Response;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Carbon\Carbon;
 
-class LogViewerController extends Controller
+class ErrorLogController
 {
+    /** Pfad zu den Log-Dateien */
+    private string $logDir;
+
+    public function __construct()
+    {
+        // 👉 passe das an, falls deine Logs anderswo liegen
+        $this->logDir = storage_path('logs');
+    }
+
     /**
-     * Zeigt eine Liste aller Log-Files und paginiert deren Inhalt.
-     *
-     * @param  Request  $request
-     * @return \Illuminate\View\View
+     * Anzeige der Logs (neueste Tagesdatei als Default).
      */
     public function index(Request $request)
     {
-        // 1) Alle Log-Dateien sortiert nach Datum (neueste zuerst)
-        $logDir = storage_path('logs');
-        $files  = collect(File::files($logDir))
-            ->sortByDesc(fn ($f) => $f->getMTime());
+        // -- 1) Dateiliste nach Datum im Dateinamen sortieren (YYYY-MM-DD)
+        $files = collect(File::files($this->logDir))
+            ->filter(fn ($f) => preg_match('/laravel-\d{4}-\d{2}-\d{2}\.log$/', $f->getFilename()))
+            ->sortByDesc(function ($f) {
+                return Carbon::createFromFormat('Y-m-d', substr($f->getFilename(), 8, 10));
+            })
+            ->values();
 
-        // 2) Aktive Datei bestimmen – Standard: die neueste
+        // -- 2) Datei bestimmen (Default: neueste)
         $currentFile = $request->string('file')
             ->whenMissing(fn () => optional($files->first())->getFilename());
 
-        abort_unless($currentFile && File::exists("$logDir/$currentFile"), 404);
+        abort_unless($currentFile && File::exists("{$this->logDir}/{$currentFile}"), 404);
 
-        // 3) Inhalt einlesen und umgekehrt sortieren (neueste Zeile zuerst)
-        $lines = collect(explode(PHP_EOL, File::get("$logDir/$currentFile")))
-            ->filter()                 // leere Zeilen entfernen
-            ->reverse()                // neueste ganz oben
+        // -- 3) Zeilen einlesen (leer → raus) & umdrehen ⇒ neueste Zeile zuerst
+        $lines = collect(explode(PHP_EOL, File::get("{$this->logDir}/{$currentFile}")))
+            ->filter()
+            ->reverse()
             ->values();
 
-        // ✨ Mini-Parser: Fehlerschwere* grob erkennen für CSS-Klassen
+        // -- 4) Level grob erkennen (ERROR, WARNING, CRITICAL …)
         $parsed = $lines->map(function (string $line) {
-            // Suche nach „.ERROR:“, „.WARNING:“ usw.
             preg_match('/\.(?<lvl>[A-Z]+):/', $line, $m);
             return [
                 'raw'   => $line,
-                'level' => strtolower($m['lvl'] ?? 'info'), // fallback „info“
+                'level' => strtolower($m['lvl'] ?? 'info'),
             ];
         });
 
-        // 4) Pagination
-        $perPage    = 100;
-        $page       = LengthAwarePaginator::resolveCurrentPage();
-        $paginated  = new LengthAwarePaginator(
+        // -- 5) Pagination
+        $perPage   = 100;
+        $page      = LengthAwarePaginator::resolveCurrentPage();
+        $paginated = new LengthAwarePaginator(
             $parsed->forPage($page, $perPage),
             $parsed->count(),
             $perPage,
@@ -64,22 +73,33 @@ class LogViewerController extends Controller
     }
 
     /**
-     * Ermöglicht den Download einer Log-Datei.
-     *
-     * @param  string  $file
-     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     * Download einer Log-Datei.
      */
-    public function download(string $file)
+    public function download(Request $request)
     {
-        $path = storage_path("logs/$file");
+        $file = $request->string('file');
+        $path = "{$this->logDir}/{$file}";
 
         abort_unless(
-            File::exists($path) && str_ends_with($file, '.log'),
+            $file && File::exists($path) && str_ends_with($file, '.log'),
             404
         );
 
-        return Response::download($path, $file, [
-            'Content-Type' => 'text/plain',
-        ]);
+        return Response::download($path, $file, ['Content-Type' => 'text/plain']);
+    }
+
+    /**
+     * Löscht **alle** Log-Dateien außer der aktuellen Tagesdatei
+     * (damit die Anwendung weiter schreiben kann).
+     */
+    public function clear()
+    {
+        $today = Carbon::today()->format('Y-m-d');
+
+        collect(File::files($this->logDir))
+            ->reject(fn ($f) => str_contains($f->getFilename(), $today))
+            ->each(fn ($f) => File::delete($f->getRealPath()));
+
+        return back()->with('status', 'Alte Log-Dateien wurden erfolgreich gelöscht.');
     }
 }
