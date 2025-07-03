@@ -11,40 +11,44 @@ use Carbon\Carbon;
 
 class ErrorLogController
 {
-    /** Log-Ordner als relativer Pfad (endet stets mit Slash/Backslash) */
-    private string $logDir = 'storage' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR;
+    /** Absoluter Pfad zu storage/logs/, garantiert mit abschließendem Slash */
+    private string $logDir;
 
-    /** aktuell angezeigte Log-Datei (relativer Name) */
+    /** aktuell angezeigte Datei (relativer Name, z. B. laravel-2025-06-04.log) */
     private string $currentFile = '';
 
     public function __construct()
     {
-        // Ordner bei Bedarf anlegen (macht keine absoluten Pfade!)
-        if (! is_dir($this->logDir)) {
-            mkdir($this->logDir, 0775, true);
-        }
+        // 1) Pfad absolut auflösen – egal, aus welchem Working-Dir PHP gestartet wurde
+        $this->logDir = rtrim(
+            base_path('storage' . DIRECTORY_SEPARATOR . 'logs'),
+            '\\/'
+        ) . DIRECTORY_SEPARATOR;
+
+        // 2) Ordner MUSS existieren – sonst sofort 500 (kein unbemerktes mkdir)
+        abort_unless(is_dir($this->logDir), 500, "Log-Verzeichnis fehlt: {$this->logDir}");
     }
 
-    // ───────────────────────────────────────────────────────── INDEX
+    /* ───────────────────────────── INDEX – Anzeige der Logs ───────────────────────────── */
     public function index(Request $request)
     {
-        /* 1) Sämtliche .log-Dateien einsammeln (ohne Regex-Filter) */
+        /* 1) Alle .log-Dateien einsammeln und nach mtime sortieren */
         $files = collect(File::glob($this->logDir . '*.log'))
             ->map(fn ($p) => new \SplFileInfo($p))
-            ->sortByDesc(fn ($f) => $f->getMTime())   // neueste zuerst
+            ->sortByDesc(fn ($f) => $f->getMTime())
             ->values();
 
-        /* 2) Gewünschte Datei bestimmen: ?file=… oder erste in Liste */
+        /* 2) Datei wählen: ?file=… oder Fallback (neueste Datei) */
         $this->currentFile = trim(basename($request->query('file', '')));
         if ($this->currentFile === '' && $files->isNotEmpty()) {
             $this->currentFile = $files->first()->getFilename();
         }
 
-        /* 3) Vollständigen Pfad RELATIV zusammenbauen und prüfen */
+        /* 3) Pfad bauen + sicherstellen, dass es wirklich eine existierende Datei ist */
         $path = $this->logDir . $this->currentFile;
         abort_unless(File::isFile($path), 404);
 
-        /* 4) Inhalt lesen, neueste Zeile nach oben, Level erkennen */
+        /* 4) Inhalt lesen → neueste Zeile zuerst, Level grob erkennen */
         $lines = collect(preg_split('/\r?\n/', File::get($path)))
             ->filter()
             ->reverse()
@@ -57,9 +61,9 @@ class ErrorLogController
                 ];
             });
 
-        /* 5) Pagination (100 Zeilen pro Seite) */
-        $perPage  = 100;
-        $page     = LengthAwarePaginator::resolveCurrentPage();
+        /* 5) Pagination */
+        $perPage = 100;
+        $page    = LengthAwarePaginator::resolveCurrentPage();
         $paginated = new LengthAwarePaginator(
             $lines->forPage($page, $perPage),
             $lines->count(),
@@ -75,7 +79,7 @@ class ErrorLogController
         ]);
     }
 
-    // ─────────────────────────────────────────────────────── DOWNLOAD
+    /* ───────────────────────────── DOWNLOAD ───────────────────────────── */
     public function download(Request $request)
     {
         $file = trim(basename($request->query('file', '')));
@@ -91,7 +95,7 @@ class ErrorLogController
         return Response::download($path, $file, ['Content-Type' => 'text/plain']);
     }
 
-    // ────────────────────────────────────────────────────────── CLEAR
+    /* ───────────────────────────── CLEAR ───────────────────────────── */
     public function clear()
     {
         $today = Carbon::today()->format('Y-m-d');
