@@ -1,5 +1,4 @@
 <x-app-layout>
-    {{-- Rechte Log-Sidebar --}}
     <x-app-marginal class="bg-body border-start" style="min-width:260px;max-width:320px">
         <div class="d-flex flex-column h-100">
             <div class="py-2 px-3 border-bottom bg-body-tertiary fw-semibold text-uppercase small sticky-top" style="z-index:2;">
@@ -24,10 +23,8 @@
         </div>
     </x-app-marginal>
 
-    {{-- Hauptinhalt --}}
     <x-app-content>
         <div class="card border-0 shadow-sm my-4" style="border-radius: 1.2rem">
-            {{-- Aktionen/Header --}}
             <div class="card-header bg-body-tertiary border-0 d-flex flex-wrap gap-2 justify-content-between align-items-center px-4 py-3" style="border-radius:1.2rem 1.2rem 0 0">
                 <span class="fw-semibold h5 mb-0 text-body-emphasis">
                     <i class="fas fa-bug me-2 text-danger"></i>{{ $currentFile }}
@@ -51,25 +48,69 @@
                 </div>
             </div>
 
-            {{-- Loganzeige --}}
-            <div class="card-body bg-body p-0" style="max-height:68vh; overflow:auto">
-                <div class="px-4 py-3">
-<pre class="text-body bg-transparent border-0" style="font-family:'Fira Code','Consolas',monospace; font-size:.96rem; line-height:1.48; background:none">
+            {{-- Moderner Log-Feed --}}
+            <div class="card-body bg-body px-0 py-3" style="max-height:65vh; overflow:auto">
+                <div class="d-flex flex-column gap-2 px-2">
 @foreach($logs as $entry)
-<span class="
-    @switch($entry['level'])
-        @case('error')    text-danger fw-bold @break
-        @case('warning')  text-warning fw-bold @break
-        @case('critical') text-danger fw-bold bg-danger bg-opacity-25 px-1 rounded @break
-        @default          text-body
-    @endswitch
-">{{ $entry['raw'] }}</span>
+    @php
+        $levelMap = [
+            'error'    => ['bg-danger text-white',      'FEHLER'],
+            'critical' => ['bg-danger text-white',      'KRITISCH'],
+            'warning'  => ['bg-warning text-dark',      'WARNUNG'],
+            'info'     => ['bg-info text-dark',         'INFO'],
+            default    => ['bg-secondary text-white',   strtoupper($entry['level'] ?? 'INFO')],
+        ];
+        [$badgeClass, $badgeLabel] = $levelMap[$entry['level']] ?? $levelMap['default'];
+    @endphp
+    <div class="d-flex gap-3 align-items-start rounded shadow-sm py-2 px-3 bg-body-tertiary border border-1">
+        <span class="badge {{ $badgeClass }} fs-7 px-2 py-2 mt-1" style="min-width:72px">{{ $badgeLabel }}</span>
+        <span class="font-monospace small text-wrap" style="line-height:1.45; word-break:break-word;">
+            {!! nl2br(e($entry['raw'])) !!}
+        </span>
+    </div>
 @endforeach
-</pre>
                 </div>
             </div>
+
+            {{-- Pagination --}}
             <div class="card-footer bg-body border-0 d-flex justify-content-center py-3" style="border-radius:0 0 1.2rem 1.2rem">
-                {{ $logs->withQueryString()->links() }}
+                {{-- Individuelle Pagination --}}
+                @php
+                    $paginator = $logs;
+                @endphp
+                @if ($paginator->hasPages())
+                    <nav>
+                        <ul class="pagination pagination-sm mb-0 gap-2">
+                            {{-- Zurück --}}
+                            <li class="page-item {{ $paginator->onFirstPage() ? 'disabled' : '' }}">
+                                <a class="page-link px-2 py-1" href="{{ $paginator->previousPageUrl() }}" rel="prev" aria-label="Zurück">
+                                    <span class="d-inline-flex align-items-center"><i class="bi bi-chevron-left" style="font-size:.95em"></i> Zurück</span>
+                                </a>
+                            </li>
+
+                            {{-- Seitenzahlen --}}
+                            @foreach ($elements = $paginator->elements() as $element)
+                                @if (is_string($element))
+                                    <li class="page-item disabled"><span class="page-link px-2 py-1">{{ $element }}</span></li>
+                                @endif
+                                @if (is_array($element))
+                                    @foreach ($element as $page => $url)
+                                        <li class="page-item {{ $page == $paginator->currentPage() ? 'active' : '' }}">
+                                            <a class="page-link px-2 py-1" href="{{ $url }}">{{ $page }}</a>
+                                        </li>
+                                    @endforeach
+                                @endif
+                            @endforeach
+
+                            {{-- Weiter --}}
+                            <li class="page-item {{ $paginator->hasMorePages() ? '' : 'disabled' }}">
+                                <a class="page-link px-2 py-1" href="{{ $paginator->nextPageUrl() }}" rel="next" aria-label="Weiter">
+                                    <span class="d-inline-flex align-items-center">Weiter <i class="bi bi-chevron-right" style="font-size:.95em"></i></span>
+                                </a>
+                            </li>
+                        </ul>
+                    </nav>
+                @endif
             </div>
         </div>
     </x-app-content>
@@ -104,7 +145,6 @@ document.addEventListener('DOMContentLoaded', () => {
     color:#fff!important;
 }
 .card{background-color:var(--bs-body-bg);}
-pre{border:none!important;border-radius:0;background:transparent;}
 .card-header,.card-footer{background:var(--bs-body-tertiary)!important;}
 .btn-body-secondary{
     background-color:var(--bs-secondary-bg)!important;
