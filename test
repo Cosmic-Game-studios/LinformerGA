@@ -175,19 +175,19 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Globale Variablen für Filter-Status
-    let currentLevelFilter = 'all';
-    let currentSearchTerm = '';
+    var currentLevelFilter = 'all';
+    var currentSearchTerm = '';
 
     // Funktion zum Anwenden aller Filter
     function applyFilters() {
-        const rows = document.querySelectorAll('#logTable tr');
+        var rows = document.querySelectorAll('#logTable tr');
         
         rows.forEach(function(row) {
-            let shouldShow = true;
+            var shouldShow = true;
             
             // Level-Filter prüfen
             if (currentLevelFilter !== 'all') {
-                const rowLevel = row.getAttribute('data-level');
+                var rowLevel = row.getAttribute('data-level');
                 if (rowLevel !== currentLevelFilter) {
                     shouldShow = false;
                 }
@@ -195,7 +195,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Suchtext-Filter prüfen
             if (currentSearchTerm && shouldShow) {
-                const content = row.getAttribute('data-content') || row.textContent.toLowerCase();
+                var content = row.getAttribute('data-content') || row.textContent.toLowerCase();
                 if (!content.includes(currentSearchTerm)) {
                     shouldShow = false;
                 }
@@ -211,10 +211,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Datumsauswahl
-    const dateSelect = document.getElementById('dateSelect');
+    var dateSelect = document.getElementById('dateSelect');
     if (dateSelect) {
         dateSelect.addEventListener('change', function(e) {
-            const params = new URLSearchParams(window.location.search);
+            var params = new URLSearchParams(window.location.search);
             params.set('date', e.target.value);
             params.delete('page'); // Seite zurücksetzen
             window.location.search = params.toString();
@@ -222,10 +222,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Zeilen pro Seite
-    const perPageSelect = document.getElementById('perPageSelect');
+    var perPageSelect = document.getElementById('perPageSelect');
     if (perPageSelect) {
         perPageSelect.addEventListener('change', function(e) {
-            const params = new URLSearchParams(window.location.search);
+            var params = new URLSearchParams(window.location.search);
             params.set('per_page', e.target.value);
             params.delete('page'); // Seite zurücksetzen
             window.location.search = params.toString();
@@ -233,7 +233,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Level-Filter
-    const levelButtons = document.querySelectorAll('.level-btn');
+    var levelButtons = document.querySelectorAll('.level-btn');
     levelButtons.forEach(function(btn) {
         btn.addEventListener('click', function() {
             // Aktive Klasse entfernen
@@ -253,7 +253,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Volltextsuche
-    const searchInput = document.getElementById('searchInput');
+    var searchInput = document.getElementById('searchInput');
     if (searchInput) {
         searchInput.addEventListener('input', function(e) {
             currentSearchTerm = e.target.value.toLowerCase();
@@ -262,7 +262,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Auto-Scroll zum Anfang
-    const cardBody = document.querySelector('.card-body');
+    var cardBody = document.querySelector('.card-body');
     if (cardBody) {
         cardBody.scrollTop = 0;
     }
