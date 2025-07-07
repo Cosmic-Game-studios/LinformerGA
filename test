@@ -1,4 +1,3 @@
-
 <x-app-layout>
     {{-- Rechte Sidebar mit Datum/Dateien --}}
     <x-app-marginal class="bg-body border-start" style="min-width:260px;max-width:320px">
@@ -168,9 +167,10 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Tooltips initialisieren
     try {
-        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
-            new bootstrap.Tooltip(el);
-        });
+        var tooltipElements = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+        for (var i = 0; i < tooltipElements.length; i++) {
+            new bootstrap.Tooltip(tooltipElements[i]);
+        }
     } catch(e) {
         console.log('Bootstrap Tooltips nicht verfügbar');
     }
@@ -179,11 +179,37 @@ document.addEventListener('DOMContentLoaded', function() {
     var currentLevelFilter = 'all';
     var currentSearchTerm = '';
 
+    // Hilfsfunktion: Klasse hinzufügen/entfernen (für ältere Browser)
+    function addClass(element, className) {
+        if (element.classList) {
+            element.classList.add(className);
+        } else {
+            element.className += ' ' + className;
+        }
+    }
+
+    function removeClass(element, className) {
+        if (element.classList) {
+            element.classList.remove(className);
+        } else {
+            element.className = element.className.replace(new RegExp('(^|\\b)' + className.split(' ').join('|') + '(\\b|$)', 'gi'), ' ');
+        }
+    }
+
+    function hasClass(element, className) {
+        if (element.classList) {
+            return element.classList.contains(className);
+        } else {
+            return new RegExp('(^| )' + className + '( |$)', 'gi').test(element.className);
+        }
+    }
+
     // Funktion zum Anwenden aller Filter
     function applyFilters() {
         var rows = document.querySelectorAll('#logTable tr');
         
-        rows.forEach(function(row) {
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
             var shouldShow = true;
             
             // Level-Filter prüfen
@@ -196,29 +222,58 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Suchtext-Filter prüfen
             if (currentSearchTerm && shouldShow) {
-                var content = row.getAttribute('data-content') || row.textContent.toLowerCase();
-                if (!content.includes(currentSearchTerm)) {
+                var content = row.getAttribute('data-content') || '';
+                if (content.toLowerCase().indexOf(currentSearchTerm) === -1) {
                     shouldShow = false;
                 }
             }
             
             // Zeile anzeigen/verstecken
             if (shouldShow) {
-                row.classList.remove('d-none');
+                removeClass(row, 'd-none');
+                row.style.display = '';
             } else {
-                row.classList.add('d-none');
+                addClass(row, 'd-none');
+                row.style.display = 'none';
             }
-        });
+        }
+    }
+
+    // URL Parameter Hilfsfunktionen (für ältere Browser)
+    function getUrlParams() {
+        var params = {};
+        var search = window.location.search.substring(1);
+        if (search) {
+            var pairs = search.split('&');
+            for (var i = 0; i < pairs.length; i++) {
+                var pair = pairs[i].split('=');
+                params[decodeURIComponent(pair[0])] = decodeURIComponent(pair[1] || '');
+            }
+        }
+        return params;
+    }
+
+    function setUrlParam(key, value) {
+        var params = getUrlParams();
+        params[key] = value;
+        delete params.page; // Seite zurücksetzen
+        
+        var newUrl = window.location.pathname + '?';
+        var paramPairs = [];
+        for (var param in params) {
+            if (params.hasOwnProperty(param)) {
+                paramPairs.push(encodeURIComponent(param) + '=' + encodeURIComponent(params[param]));
+            }
+        }
+        newUrl += paramPairs.join('&');
+        window.location.href = newUrl;
     }
 
     // Datumsauswahl
     var dateSelect = document.getElementById('dateSelect');
     if (dateSelect) {
         dateSelect.addEventListener('change', function(e) {
-            var params = new URLSearchParams(window.location.search);
-            params.set('date', e.target.value);
-            params.delete('page'); // Seite zurücksetzen
-            window.location.search = params.toString();
+            setUrlParam('date', e.target.value);
         });
     }
 
@@ -226,24 +281,21 @@ document.addEventListener('DOMContentLoaded', function() {
     var perPageSelect = document.getElementById('perPageSelect');
     if (perPageSelect) {
         perPageSelect.addEventListener('change', function(e) {
-            var params = new URLSearchParams(window.location.search);
-            params.set('per_page', e.target.value);
-            params.delete('page'); // Seite zurücksetzen
-            window.location.search = params.toString();
+            setUrlParam('per_page', e.target.value);
         });
     }
 
     // Level-Filter
     var levelButtons = document.querySelectorAll('.level-btn');
-    levelButtons.forEach(function(btn) {
-        btn.addEventListener('click', function() {
-            // Aktive Klasse entfernen
-            levelButtons.forEach(function(b) {
-                b.classList.remove('active');
-            });
+    for (var i = 0; i < levelButtons.length; i++) {
+        levelButtons[i].addEventListener('click', function() {
+            // Aktive Klasse von allen entfernen
+            for (var j = 0; j < levelButtons.length; j++) {
+                removeClass(levelButtons[j], 'active');
+            }
             
-            // Aktive Klasse setzen
-            this.classList.add('active');
+            // Aktive Klasse zu diesem Button hinzufügen
+            addClass(this, 'active');
             
             // Filter-Status aktualisieren
             currentLevelFilter = this.getAttribute('data-level');
@@ -251,12 +303,18 @@ document.addEventListener('DOMContentLoaded', function() {
             // Filter anwenden
             applyFilters();
         });
-    });
+    }
 
     // Volltextsuche
     var searchInput = document.getElementById('searchInput');
     if (searchInput) {
         searchInput.addEventListener('input', function(e) {
+            currentSearchTerm = e.target.value.toLowerCase();
+            applyFilters();
+        });
+        
+        // Auch keyup für ältere Browser
+        searchInput.addEventListener('keyup', function(e) {
             currentSearchTerm = e.target.value.toLowerCase();
             applyFilters();
         });
