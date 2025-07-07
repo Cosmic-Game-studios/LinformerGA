@@ -34,14 +34,13 @@
     {{-- Hauptbereich --}}
     <x-app-content>
         <div class="card border-0 shadow-sm my-4" style="border-radius:1.2rem">
-            {{-- Header mit deaktivierten Controls --}}
-            <div class="card-header bg-body-tertiary border-0 px-4 py-3"
-                 style="border-radius:1.2rem 1.2rem 0 0">
+            {{-- Header mit Controls --}}
+            <div class="card-header bg-body-tertiary border-0 px-4 py-3" style="border-radius:1.2rem 1.2rem 0 0">
                 <div class="d-flex flex-wrap align-items-center gap-3">
-                    {{-- Datumsauswahl (deaktiviert) --}}
+                    {{-- Datumsauswahl --}}
                     <div class="d-flex align-items-center gap-2">
                         <label class="small mb-0 text-body-secondary">Datum:</label>
-                        <select class="form-select form-select-sm w-auto" disabled>
+                        <select id="dateSelect" class="form-select form-select-sm w-auto">
                             @foreach($availableDates as $it)
                                 <option value="{{ $it['date'] }}" {{ $it['date']==$currentDate?'selected':'' }}>
                                     {{ $it['date'] }}
@@ -50,43 +49,39 @@
                         </select>
                     </div>
 
-                    {{-- Zeilen/Seite (deaktiviert) --}}
+                    {{-- Zeilen/Seite --}}
                     <div class="d-flex align-items-center gap-2">
                         <label class="small mb-0 text-body-secondary">Zeilen/Seite:</label>
-                        <select class="form-select form-select-sm w-auto" disabled>
+                        <select id="perPageSelect" class="form-select form-select-sm w-auto">
                             @foreach($perPageOptions as $opt)
                                 <option value="{{ $opt }}" {{ $opt==$perPage?'selected':'' }}>{{ $opt }}</option>
                             @endforeach
                         </select>
                     </div>
 
-                    {{-- Level-Filter (deaktiviert) --}}
+                    {{-- Level-Filter --}}
                     <div class="btn-group" role="group" aria-label="Log-Level filtern">
-                        <button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled>Alle</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled>ERROR</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled>WARNUNG</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary disabled" disabled>INFO</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary level-btn active" data-level="all">Alle</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary level-btn" data-level="error">ERROR</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary level-btn" data-level="warning">WARNUNG</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary level-btn" data-level="info">INFO</button>
                     </div>
 
-                    {{-- Volltextsuche (deaktiviert) --}}
+                    {{-- Volltextsuche --}}
                     <div class="input-group input-group-sm flex-grow-1" style="min-width:200px">
-                        <span class="input-group-text"><i class="fas fa-search text-body-secondary"></i></span>
-                        <input type="text" class="form-control" placeholder="Suche…" disabled>
+                        <span class="input-group-text"><i class="fas fa-search"></i></span>
+                        <input id="searchInput" type="text" class="form-control" placeholder="Suche…">
                     </div>
 
-                    {{-- Download & Clear (aktiv) --}}
+                    {{-- Download & Clear --}}
                     <div class="btn-group ms-auto">
                         <a href="{{ route('admin.errorlog.download', ['file'=>$currentFile]) }}"
-                           class="btn btn-sm btn-body-secondary border-0 shadow-sm"
-                           data-bs-toggle="tooltip" title="Download">
+                           class="btn btn-sm btn-body-secondary border-0 shadow-sm" data-bs-toggle="tooltip" title="Download">
                             <i class="fas fa-download"></i>
                         </a>
-                        <form action="{{ route('admin.errorlog.clear') }}" method="POST" class="m-0"
-                              onsubmit="return confirm('Alle älteren Logs löschen?');">
+                        <form action="{{ route('admin.errorlog.clear') }}" method="POST" class="m-0" onsubmit="return confirm('Alle älteren Logs löschen?');">
                             @csrf @method('DELETE')
-                            <button type="submit"
-                                    class="btn btn-sm btn-body-secondary border-0 shadow-sm text-danger"
-                                    data-bs-toggle="tooltip" title="Alte Logs löschen">
+                            <button type="submit" class="btn btn-sm btn-body-secondary border-0 shadow-sm text-danger" data-bs-toggle="tooltip" title="Alte Logs löschen">
                                 <i class="fas fa-trash-alt"></i>
                             </button>
                         </form>
@@ -96,8 +91,7 @@
 
             {{-- Logs als Tabelle --}}
             <div class="card-body bg-body p-0" style="max-height:65vh; overflow:auto">
-                <table class="table table-sm table-hover align-middle mb-0"
-                       style="font-family:'Fira Code','Consolas',monospace;font-size:.95rem">
+                <table class="table table-sm table-hover align-middle mb-0" style="font-family:'Fira Code','Consolas',monospace;font-size:.95rem">
                     <thead class="small text-body-secondary sticky-top bg-body-tertiary">
                         <tr>
                             <th style="width:80px">Level</th>
@@ -108,15 +102,15 @@
                     <tbody id="logTable">
                         @foreach($logs as $entry)
                             @php
-                                $lvl = $entry['level'];
+                                $lvl = strtolower($entry['level']); // Kleinbuchstaben für data-level
                                 $color = in_array($lvl,['error','critical'])
-                                    ? 'bg-danger text-white'
+                                    ? 'bg-danger text DARK MODE WHITE'
                                     : ($lvl==='warning' ? 'bg-warning text-dark' : 'bg-info text-dark');
                                 preg_match('/\[(.*?)\]/',$entry['raw'],$m);
                                 $time = $m[1] ?? '';
-                                $msg  = trim(preg_replace('/^\[[^\]]+\]\s+\w+\.([A-Z]+):\s*/','',$entry['raw']));
+                                $msg  = trim( ruling out '/^\[[^\]]+\]\s+\w+\.([A-Z]+):\s*/','',$entry['raw']));
                             @endphp
-                            <tr>
+                            <tr data-level="{{ $lvl }}">
                                 <td><span class="badge rounded-pill px-2 py-1 {{ $color }}">{{ strtoupper($lvl) }}</span></td>
                                 <td class="small text-nowrap text-body-secondary">{{ $time }}</td>
                                 <td class="text-wrap" style="white-space:pre-line">{{ $msg }}</td>
@@ -127,25 +121,33 @@
             </div>
 
             {{-- Pagination --}}
-            <div class="card-footer bg-body border-0 d-flex justify-content-center py-3"
-                 style="border-radius:0 0 1.2rem 1.2rem">
+            <div class="card-footer bg-body border-0 d-flex justify-content-center py-3" style="border-radius:0 0 1.2rem 1.2rem">
                 @if($logs->hasPages())
                 <nav>
                     <ul class="pagination justify-content-center my-0 small">
                         {{-- Zurück --}}
                         <li class="page-item {{ $logs->onFirstPage()?'disabled':'' }}">
-                            <a class="page-link px-2" href="#" tabindex="-1" aria-disabled="true">
-                                <span style="font-size:.8em">&#8592;</span> <span class="d-none d-md-inline">Zurück</span>
+                            <a class="page-link px-2" href="{{ $logs->previousPageUrl() }}&date={{ $currentDate }}&per_page={{ $perPage }}" rel="prev">
+                                <span style="font-size:.8em">←</span> <span class="d-none d-md-inline">Zurück</span>
                             </a>
                         </li>
-                        {{-- Seitenzahlen (inaktiv) --}}
-                        <li class="page-item active">
-                            <span class="page-link px-2 rounded-circle">{{ $logs->currentPage() }}</span>
-                        </li>
+                        @php
+                            $cur   = $logs->currentPage();
+                            $last  = $logs->lastPage();
+                            $start = max(1,$cur-1);
+                            $end   = min($last,$cur+1);
+                        @endphp
+                        @for($p=$start;$p<=$end;$p++)
+                            <li class="page-item {{ $p==$cur?'active':'' }}">
+                                <a class="page-link px-2 rounded-circle" href="{{ url()->current() }}?date={{ $currentDate }}&page={{ $p }}&per_page={{ $perPage }}">
+                                    {{ $p }}
+                                </a>
+                            </li>
+                        @endfor
                         {{-- Weiter --}}
                         <li class="page-item {{ $logs->hasMorePages()?'':'disabled' }}">
-                            <a class="page-link px-2" href="#" tabindex="-1" aria-disabled="true">
-                                <span class="d-none d-md-inline">Weiter</span> <span style="font-size:.8em">&#8594;</span>
+                            <a class="page-link px-2" href="{{ $logs->nextPageUrl() }}&date={{ $currentDate }}&per_page={{ $perPage }}" rel="next">
+                                <span class="d-none d-md-inline">Weiter</span> <span style="font-size:.8em">→</span>
                             </a>
                         </li>
                     </ul>
@@ -159,14 +161,56 @@
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded',()=>{
-  // Nur Tooltips aktivieren
-  document.querySelectorAll('[data-bs-toggle="tooltip"]')
-          .forEach(el=>new bootstrap.Tooltip(el));
-  // Keine Filter-Logik, da Controls deaktiviert
+    // Tooltips
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el=>new bootstrap.Tooltip(el));
+
+    // Datumsauswahl
+    document.getElementById('dateSelect').addEventListener('change',e=>{
+        const params=new URLSearchParams(location.search);
+        params.set('date',e.target.value);
+        params.delete('page');
+        location.search=params.toString();
+    });
+
+    // Zeilen/Seite
+    document.getElementById('perPageSelect').addEventListener('change',e=>{
+        const params=new URLSearchParams(location.search);
+        params.set('per_page',e.target.value);
+        params.delete('page');
+        location.search=params.toString();
+    });
+
+    // Level-Filter
+    document.querySelectorAll('.level-btn').forEach(btn=>btn.addEventListener('click',()=>{
+        document.querySelectorAll('.level-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        const lvl=btn.dataset.level;
+        document.querySelectorAll('#logTable tr').forEach(tr=>{
+            tr.classList.toggle('d-none', lvl!=='all' && tr.dataset.level!==lvl);
+        });
+    }));
+
+    // Volltextsuche
+    document.getElementById('searchInput').addEventListener('input',e=>{
+        const term=e.target.value.toLowerCase();
+        document.querySelectorAll('#logTable tr').forEach(tr=>{
+            tr.classList.toggle('d-none', !tr.innerText.toLowerCase().includes(term));
+        });
+    });
+
+    // Auto-Scroll
+    const box=document.querySelector('.card-body');
+    if(box)box.scrollTop=0;
 });
 </script>
 @endpush
 
 <style>
-/* alle bisherigen Utility-Styles beibehalten */
+.sidebar-item{background:var(--bs-body-bg)!important;color:var(--bs-body-color)!important;transition:.2s}
+.sidebar-item:hover{background:var(--bs-tertiary-bg)!important;color:var(--bs-body-color)!important}
+.list-group-item.active{background:#0d6efd!important;color:#fff!important}
+.card,.pagination .page-item.active .page-link{background:var(--bs-body-bg)!important}
+.card-header,.card-footer{background:var(--bs-body-tertiary)!important}
+.btn-body-secondary{background:var(--bs-secondary-bg)!important;color:var(--bs-body-color)!important;border:none!important}
+.btn-body-secondary:hover{background:var(--bs-tertiary-bg)!important}
 </style>
