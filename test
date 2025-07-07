@@ -1,282 +1,158 @@
-<x-app-layout>
-    {{-- Rechte Sidebar mit Datum/Dateien --}}
-    <x-app-marginal class="bg-body border-start" style="min-width:260px;max-width:320px">
-        <div class="d-flex flex-column h-100">
-            <div class="py-2 px-3 border-bottom bg-body-tertiary fw-semibold text-uppercase small sticky-top" style="z-index:2;">
-                <i class="fas fa-list-ul me-2"></i> Log-Dateien
-            </div>
-            <div class="flex-grow-1 overflow-auto">
-                <div class="list-group list-group-flush">
-                    @foreach($availableDates as $item)
-                        @php
-                            $d      = $item['date'];
-                            $size   = $item['size'];
-                            $active = $d === $currentDate;
-                            $url    = route('admin.errorlog.index', ['date'=>$d,'per_page'=>$perPage]);
-                        @endphp
-                        <a href="{{ $url }}"
-                           class="list-group-item list-group-item-action d-flex justify-content-between align-items-center
-                                  border-0 py-3 pe-3 ps-4 {{ $active ? 'active bg-primary text-white shadow-sm' : 'sidebar-item' }}">
-                            <span class="text-truncate" style="max-width:140px">
-                                <i class="fas fa-file-alt me-2 text-body-secondary"></i>
-                                laravel-{{ $d }}.log
-                            </span>
-                            <small class="badge bg-body-secondary text-body rounded-pill">
-                                {{ number_format($size/1024,1) }} KB
-                            </small>
-                        </a>
-                    @endforeach
-                </div>
-            </div>
-        </div>
-    </x-app-marginal>
+<?php
 
-```
-{{-- Hauptbereich --}}
-<x-app-content>
-    <div class="card border-0 shadow-sm my-4" style="border-radius:1.2rem">
-        {{-- Header mit Controls --}}
-        <div class="card-header bg-body-tertiary border-0 px-4 py-3" style="border-radius:1.2rem 1.2rem 0 0">
-            <div class="d-flex flex-wrap align-items-center gap-3">
-                {{-- Datumsauswahl --}}
-                <div class="d-flex align-items-center gap-2">
-                    <label class="small mb-0 text-body-secondary">Datum:</label>
-                    <select id="dateSelect" class="form-select form-select-sm w-auto">
-                        @foreach($availableDates as $it)
-                            <option value="{{ $it['date'] }}" {{ $it['date']==$currentDate?'selected':'' }}>
-                                {{ $it['date'] }}
-                            </option>
-                        @endforeach
-                    </select>
-                </div>
+namespace Modules\Admin\Controllers;
 
-                {{-- Zeilen/Seite --}}
-                <div class="d-flex align-items-center gap-2">
-                    <label class="small mb-0 text-body-secondary">Zeilen/Seite:</label>
-                    <select id="perPageSelect" class="form-select form-select-sm w-auto">
-                        @foreach($perPageOptions as $opt)
-                            <option value="{{ $opt }}" {{ $opt==$perPage?'selected':'' }}>{{ $opt }}</option>
-                        @endforeach
-                    </select>
-                </div>
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Response;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Str;
+use Carbon\Carbon;
+use SplFileObject;
 
-                {{-- Level-Filter --}}
-                <div class="btn-group" role="group" aria-label="Log-Level filtern">
-                    <button type="button" class="btn btn-sm btn-outline-secondary level-btn active" data-level="all">Alle</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary level-btn" data-level="error">ERROR</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary level-btn" data-level="warning">WARNUNG</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary level-btn" data-level="info">INFO</button>
-                </div>
+class ErrorLogController
+{
+    private string $logDir;
+    private string $currentFile = '';
+    private int $maxTailLines = 10000;
 
-                {{-- Volltextsuche --}}
-                <div class="input-group input-group-sm flex-grow-1" style="min-width:200px">
-                    <span class="input-group-text"><i class="fas fa-search"></i></span>
-                    <input id="searchInput" type="text" class="form-control" placeholder="Suche…">
-                </div>
+    public function __construct()
+    {
+        $this->logDir = rtrim(
+            base_path('storage' . DIRECTORY_SEPARATOR . 'logs'),
+            '\\/'
+        ) . DIRECTORY_SEPARATOR;
 
-                {{-- Download & Clear --}}
-                <div class="btn-group ms-auto">
-                    <a href="{{ route('admin.errorlog.download', ['file'=>$currentFile]) }}"
-                       class="btn btn-sm btn-body-secondary border-0 shadow-sm" data-bs-toggle="tooltip" title="Download">
-                        <i class="fas fa-download"></i>
-                    </a>
-                    <form action="{{ route('admin.errorlog.clear') }}" method="POST" class="m-0" onsubmit="return confirm('Alle älteren Logs löschen?');">
-                        @csrf @method('DELETE')
-                        <button type="submit" class="btn btn-sm btn-body-secondary border-0 shadow-sm text-danger" data-bs-toggle="tooltip" title="Alte Logs löschen">
-                            <i class="fas fa-trash-alt"></i>
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        {{-- Logs als Tabelle --}}
-        <div class="card-body bg-body p-0" style="max-height:65vh; overflow:auto">
-            <table class="table table-sm table-hover align-middle mb-0" style="font-family:'Fira Code','Consolas',monospace;font-size:.95rem">
-                <thead class="small text-body-secondary sticky-top bg-body-tertiary">
-                    <tr>
-                        <th style="width:80px">Level</th>
-                        <th style="width:140px">Zeit</th>
-                        <th>Nachricht</th>
-                    </tr>
-                </thead>
-                <tbody id="logTable">
-                    @foreach($logs as $entry)
-                        @php
-                            $lvl = $entry['level'];
-                            $color = in_array($lvl,['error','critical'])
-                                ? 'bg-danger text-white'
-                                : ($lvl==='warning' ? 'bg-warning text-dark' : 'bg-info text-dark');
-                            preg_match('/\[(.*?)\]/',$entry['raw'],$m);
-                            $time = $m[1] ?? '';
-                            $msg  = trim(preg_replace('/^\[[^\]]+\]\s+\w+\.([A-Z]+):\s*/','',$entry['raw']));
-                        @endphp
-                        <tr data-level="{{ $lvl }}" data-content="{{ strtolower($entry['raw']) }}">
-                            <td><span class="badge rounded-pill px-2 py-1 {{ $color }}">{{ strtoupper($lvl) }}</span></td>
-                            <td class="small text-nowrap text-body-secondary">{{ $time }}</td>
-                            <td class="text-wrap" style="white-space:pre-line">{{ $msg }}</td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
-        </div>
-
-        {{-- Pagination --}}
-        <div class="card-footer bg-body border-0 d-flex justify-content-center py-3" style="border-radius:0 0 1.2rem 1.2rem">
-            @if($logs->hasPages())
-            <nav>
-                <ul class="pagination justify-content-center my-0 small">
-                    {{-- Zurück --}}
-                    <li class="page-item {{ $logs->onFirstPage()?'disabled':'' }}">
-                        <a class="page-link px-2" href="{{ $logs->previousPageUrl() }}&date={{ $currentDate }}&per_page={{ $perPage }}" rel="prev">
-                            <span style="font-size:.8em">&#8592;</span> <span class="d-none d-md-inline">Zurück</span>
-                        </a>
-                    </li>
-                    @php
-                        $cur   = $logs->currentPage();
-                        $last  = $logs->lastPage();
-                        $start = max(1,$cur-1);
-                        $end   = min($last,$cur+1);
-                    @endphp
-                    @for($p=$start;$p<=$end;$p++)
-                        <li class="page-item {{ $p==$cur?'active':'' }}">
-                            <a class="page-link px-2 rounded-circle" href="{{ url()->current() }}?date={{ $currentDate }}&page={{ $p }}&per_page={{ $perPage }}">
-                                {{ $p }}
-                            </a>
-                        </li>
-                    @endfor
-                    {{-- Weiter --}}
-                    <li class="page-item {{ $logs->hasMorePages()?'':'disabled' }}">
-                        <a class="page-link px-2" href="{{ $logs->nextPageUrl() }}&date={{ $currentDate }}&per_page={{ $perPage }}" rel="next">
-                            <span class="d-none d-md-inline">Weiter</span> <span style="font-size:.8em">&#8594;</span>
-                        </a>
-                    </li>
-                </ul>
-            </nav>
-            @endif
-        </div>
-    </div>
-</x-app-content>
-```
-
-</x-app-layout>
-
-@push(‘scripts’)
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Tooltips initialisieren
-    try {
-        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
-            new bootstrap.Tooltip(el);
-        });
-    } catch(e) {
-        console.log('Bootstrap Tooltips nicht verfügbar');
+        abort_unless(is_dir($this->logDir), 500, "Log-Verzeichnis fehlt: {$this->logDir}");
     }
 
-    // Globale Variablen für Filter-Status
-    var currentLevelFilter = 'all';
-    var currentSearchTerm = '';
+    public function index(Request $request)
+    {
+        // 1) Alle log-Dateien lesen und sortieren
+        $files = collect(File::glob($this->logDir . 'laravel-*.log'))
+            ->map(fn($p) => new \SplFileInfo($p))
+            ->sortByDesc(fn($f) => $f->getMTime())
+            ->values();
 
-    // Funktion zum Anwenden aller Filter
-    function applyFilters() {
-        var rows = document.querySelectorAll('#logTable tr');
-        
-        rows.forEach(function(row) {
-            var shouldShow = true;
-            
-            // Level-Filter prüfen
-            if (currentLevelFilter !== 'all') {
-                var rowLevel = row.getAttribute('data-level');
-                if (rowLevel !== currentLevelFilter) {
-                    shouldShow = false;
+        // 2) availableDates: [{date, size}, …] für Sidebar
+        $availableDates = $files
+            ->map(function($f) {
+                // Bessere Datum-Extraktion
+                $filename = $f->getFilename();
+                preg_match('/laravel-(\d{4}-\d{2}-\d{2})\.log/', $filename, $matches);
+                $date = $matches[1] ?? substr($filename, 8, 10);
+                
+                return [
+                    'date' => $date,
+                    'size' => $f->getSize(),
+                ];
+            })
+            ->filter(fn($item) => !empty($item['date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $item['date']))
+            ->unique('date')
+            ->sortByDesc('date')
+            ->values();
+
+        // 3) Aktuelles Datum / Datei
+        $dateParam = $request->query('date', $availableDates->first()['date'] ?? null);
+        if (! $dateParam || ! $availableDates->firstWhere('date', $dateParam)) {
+            $dateParam = $availableDates->first()['date'] ?? null;
+        }
+        $this->currentFile = "laravel-{$dateParam}.log";
+
+        // 4) Existenz-Check
+        $path = $this->logDir . $this->currentFile;
+        abort_unless(File::isFile($path), 404);
+
+        // 5) per-page Options - korrigiert um mit Blade-Template übereinzustimmen
+        $perPageOptions = [25, 50, 100, 200];
+        $perPage = (int) $request->query('per_page', 50);
+        if (! in_array($perPage, $perPageOptions, true)) {
+            $perPage = 50;
+        }
+
+        // 6) Tail-Lesen
+        $rawLines = $this->getTailLines($path, $this->maxTailLines);
+        $lines = collect($rawLines)
+            ->map(fn($l) => trim($l))
+            ->filter()
+            ->reverse()
+            ->values()
+            ->map(function(string $line) {
+                // Verbesserte Level-Erkennung
+                $level = 'info'; // Default
+                
+                // Verschiedene Log-Formate unterstützen
+                if (preg_match('/\.(?:ERROR|CRITICAL|EMERGENCY|ALERT):/i', $line)) {
+                    $level = 'error';
+                } elseif (preg_match('/\.(?:WARNING|WARN):/i', $line)) {
+                    $level = 'warning';
+                } elseif (preg_match('/\.(?:INFO|NOTICE):/i', $line)) {
+                    $level = 'info';
+                } elseif (preg_match('/\.(?:DEBUG):/i', $line)) {
+                    $level = 'info';
                 }
-            }
-            
-            // Suchtext-Filter prüfen
-            if (currentSearchTerm && shouldShow) {
-                var content = row.getAttribute('data-content') || row.textContent.toLowerCase();
-                if (!content.includes(currentSearchTerm)) {
-                    shouldShow = false;
-                }
-            }
-            
-            // Zeile anzeigen/verstecken
-            if (shouldShow) {
-                row.classList.remove('d-none');
-            } else {
-                row.classList.add('d-none');
-            }
-        });
-    }
-
-    // Datumsauswahl
-    var dateSelect = document.getElementById('dateSelect');
-    if (dateSelect) {
-        dateSelect.addEventListener('change', function(e) {
-            var params = new URLSearchParams(window.location.search);
-            params.set('date', e.target.value);
-            params.delete('page'); // Seite zurücksetzen
-            window.location.search = params.toString();
-        });
-    }
-
-    // Zeilen pro Seite
-    var perPageSelect = document.getElementById('perPageSelect');
-    if (perPageSelect) {
-        perPageSelect.addEventListener('change', function(e) {
-            var params = new URLSearchParams(window.location.search);
-            params.set('per_page', e.target.value);
-            params.delete('page'); // Seite zurücksetzen
-            window.location.search = params.toString();
-        });
-    }
-
-    // Level-Filter
-    var levelButtons = document.querySelectorAll('.level-btn');
-    levelButtons.forEach(function(btn) {
-        btn.addEventListener('click', function() {
-            // Aktive Klasse entfernen
-            levelButtons.forEach(function(b) {
-                b.classList.remove('active');
+                
+                return [
+                    'raw'   => $line,
+                    'level' => $level,
+                ];
             });
-            
-            // Aktive Klasse setzen
-            this.classList.add('active');
-            
-            // Filter-Status aktualisieren
-            currentLevelFilter = this.getAttribute('data-level');
-            
-            // Filter anwenden
-            applyFilters();
-        });
-    });
 
-    // Volltextsuche
-    var searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-        searchInput.addEventListener('input', function(e) {
-            currentSearchTerm = e.target.value.toLowerCase();
-            applyFilters();
-        });
+        // 7) Pagination
+        $page = LengthAwarePaginator::resolveCurrentPage();
+        $logs = new LengthAwarePaginator(
+            $lines->forPage($page, $perPage),
+            $lines->count(),
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+
+        return view('admin::errorlog.index', [
+            'availableDates'  => $availableDates,
+            'currentDate'     => $dateParam,
+            'currentFile'     => $this->currentFile,
+            'perPage'         => $perPage,
+            'perPageOptions'  => $perPageOptions,
+            'logs'            => $logs,
+        ]);
     }
 
-    // Auto-Scroll zum Anfang
-    var cardBody = document.querySelector('.card-body');
-    if (cardBody) {
-        cardBody.scrollTop = 0;
+    public function download(Request $request)
+    {
+        $file = trim(basename($request->query('file', '')));
+        $path = $this->logDir . $file;
+        abort_unless(
+            $file && Str::endsWith(Str::lower($file), '.log') && File::isFile($path),
+            404
+        );
+        return Response::download($path, $file, ['Content-Type' => 'text/plain']);
     }
-});
-</script>
 
-@endpush
+    public function clear()
+    {
+        $today = Carbon::today()->format('Y-m-d');
+        collect(File::glob($this->logDir . '*.log'))
+            ->filter(fn($p) => ! Str::contains($p, $today))
+            ->each(fn($p) => File::delete($p));
+        return back()->with('status', 'Alle älteren Log-Dateien wurden gelöscht.');
+    }
 
-<style>
-.sidebar-item{background:var(--bs-body-bg)!important;color:var(--bs-body-color)!important;transition:.2s}
-.sidebar-item:hover{background:var(--bs-tertiary-bg)!important;color:var(--bs-body-color)!important}
-.list-group-item.active{background:#0d6efd!important;color:#fff!important}
-.card,.pagination .page-item.active .page-link{background:var(--bs-body-bg)!important}
-.card-header,.card-footer{background:var(--bs-body-tertiary)!important}
-.btn-body-secondary{background:var(--bs-secondary-bg)!important;color:var(--bs-body-color)!important;border:none!important}
-.btn-body-secondary:hover{background:var(--bs-tertiary-bg)!important}
-</style>
+    protected function getTailLines(string $path, int $maxLines = 1000): array
+    {
+        $file = new SplFileObject($path, 'r');
+        $file->seek(PHP_INT_MAX);
+        $last = $file->key();
+        if ($last < $maxLines) {
+            $file->rewind();
+            return iterator_to_array($file, false);
+        }
+        $file->seek(max(0, $last - $maxLines));
+        $lines = [];
+        while (! $file->eof()) {
+            $lines[] = $file->current();
+            $file->next();
+        }
+        return $lines;
+    }
+}
