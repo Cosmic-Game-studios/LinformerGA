@@ -1,0 +1,155 @@
+<?php
+
+namespace Acme\DynamicLists\Http\Controllers;
+
+use Acme\DynamicLists\Models\DynamicColumn;
+use Acme\DynamicLists\Models\DynamicList;
+use Acme\DynamicLists\Models\DynamicRow;
+use Illuminate\Http\Request;
+use Illuminate\Routing\Controller;
+use Illuminate\Support\Collection;
+use Illuminate\Validation\Rule;
+use Symfony\Component\HttpKernel\Exception\HttpException;
+
+class DynamicListController extends Controller
+{
+    // === List Management ===
+
+    public function index()
+    {
+        $lists = DynamicList::withCount(['columns', 'rows'])->latest()->get();
+        return view('dynamic-lists::index', compact('lists'));
+    }
+
+    public function storeList(Request $request)
+    {
+        $request->validate(['name' => 'required|string|max:255|unique:dynamic_lists,name']);
+        DynamicList::create($request->only('name'));
+        return back()->with('success', 'List created successfully.');
+    }
+
+    public function destroyList(DynamicList $list)
+    {
+        $list->delete(); // Cascading delete will handle related columns and rows
+        return back()->with('success', 'List deleted successfully.');
+    }
+
+    // === Edit View & Footer Calculation ===
+
+    public function edit(DynamicList $list)
+    {
+        $list->load(['columns', 'rows']);
+        $footerData = $this->calculateFooter($list->columns, $list->rows);
+        return view('dynamic-lists::edit', compact('list', 'footerData'));
+    }
+
+    // === Column Management ===
+
+    public function storeColumn(Request $request, DynamicList $list)
+    {
+        $request->validate([
+            'name' => ['required', 'string', 'max:255', Rule::unique('dynamic_columns')->where('dynamic_list_id', $list->id)],
+            'type' => ['required', Rule::in(['text', 'number'])],
+            'function' => ['nullable', Rule::in(['sum', 'avg', 'count'])],
+        ]);
+
+        $list->columns()->create($request->all());
+        return back()->with('success', 'Column added successfully.');
+    }
+    
+    public function destroyColumn(DynamicList $list, DynamicColumn $column)
+    {
+        if ($column->dynamic_list_id !== $list->id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        // Remove the column's data from all rows
+        $rows = $list->rows;
+        foreach ($rows as $row) {
+            $data = $row->data;
+            unset($data[$column->id]);
+            $row->update(['data' => $data]);
+        }
+        
+        $column->delete();
+        return back()->with('success', 'Column deleted successfully.');
+    }
+
+    // === Row Management ===
+
+    public function storeRow(Request $request, DynamicList $list)
+    {
+        $this->validateRowData($request, $list->columns);
+
+        $list->rows()->create(['data' => $request->input('data', [])]);
+        return back()->with('success', 'Row added successfully.');
+    }
+    
+    public function updateRow(Request $request, DynamicList $list, DynamicRow $row)
+    {
+        if ($row->dynamic_list_id !== $list->id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $this->validateRowData($request, $list->columns);
+        
+        $row->update(['data' => $request->input('data', [])]);
+        return back()->with('success', 'Row updated successfully.');
+    }
+
+    public function destroyRow(DynamicList $list, DynamicRow $row)
+    {
+        if ($row->dynamic_list_id !== $list->id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $row->delete();
+        return back()->with('success', 'Row deleted successfully.');
+    }
+    
+    // === Helper Methods ===
+
+    protected function validateRowData(Request $request, Collection $columns)
+    {
+        $rules = [];
+        foreach ($columns as $column) {
+            $rule = ['nullable'];
+            if ($column->type === 'number') {
+                $rule[] = 'numeric';
+            } else {
+                $rule[] = 'string';
+                $rule[] = 'max:65535'; // TEXT limit
+            }
+            $rules['data.' . $column->id] = $rule;
+        }
+        $request->validate($rules);
+    }
+
+    protected function calculateFooter(Collection $columns, Collection $rows): array
+    {
+        $footer = [];
+        foreach ($columns as $column) {
+            if ($column->type === 'number' && $column->function) {
+                $values = $rows->pluck('data.' . $column->id)->filter(fn($val) => is_numeric($val));
+                
+                if ($values->isEmpty()) {
+                    $footer[$column->id] = 0;
+                    continue;
+                }
+
+                switch ($column->function) {
+                    case 'sum':
+                        $footer[$column->id] = $values->sum();
+                        break;
+                    case 'avg':
+                        $footer[$column->id] = round($values->avg(), 2);
+                        break;
+                    case 'count':
+                        $footer[$column->id] = $values->count();
+                        break;
+                }
+            }
+        }
+        return $footer;
+    }
+}
